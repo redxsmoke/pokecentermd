@@ -3,6 +3,9 @@ from discord import app_commands
 from discord.ext import commands
 import os
 
+from Commands.Cart.cart import CheckoutStartView  # ✅ needed for Checkout button
+
+
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -78,6 +81,7 @@ class Inventory(commands.Cog):
             files=files,
             ephemeral=True
         )
+
     async def run_query(self, pokemon_name=None, set_name=None, filters=None):
         where_clauses = ["quantity_available >= 1"]
         params = []
@@ -182,6 +186,8 @@ class Inventory(commands.Cog):
             if row["graded"]:
                 details += f"• **Grading Company:** {row['grading_company']}\n"
                 details += f"• **Grade:** {row['grade']}\n"
+
+            details += "\n\n[Click Here](https://dextcg.com/users/redxsmoke/folders/99d3ec14-0435-419e-bf51-331a37821152?type=standard_v2) to view our inventory online."
 
             embed.description = details
             embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
@@ -354,7 +360,38 @@ class Inventory(commands.Cog):
                 color=discord.Color.green()
             )
 
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            view = discord.ui.View()
+
+            checkout_button = discord.ui.Button(
+                label="Checkout",
+                style=discord.ButtonStyle.success
+            )
+
+            async def checkout_callback(inner_interaction: discord.Interaction):
+                cart_view = CheckoutStartView(self.bot, inner_interaction.user.id)
+                embed_checkout = discord.Embed(
+                    title="Checkout",
+                    description="Select shipping and payment method:",
+                    color=discord.Color.blue()
+                )
+                await inner_interaction.response.send_message(embed=embed_checkout, view=cart_view, ephemeral=True)
+
+            checkout_button.callback = checkout_callback
+            view.add_item(checkout_button)
+
+            view_cart_button = discord.ui.Button(
+                label="View Cart",
+                style=discord.ButtonStyle.primary
+            )
+
+            async def view_cart_callback(inner_interaction: discord.Interaction):
+                cart_cog = inner_interaction.client.get_cog("Cart")
+                await cart_cog.open_cart(inner_interaction)
+
+            view_cart_button.callback = view_cart_callback
+            view.add_item(view_cart_button)
+
+            await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
         @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary)
         async def previous(self, interaction, button):
@@ -496,6 +533,5 @@ class Inventory(commands.Cog):
             )
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
-
 
 
