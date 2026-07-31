@@ -1,0 +1,2 @@
+SHOP_OPEN = True
+SHOP_CLOSE_REASON = None

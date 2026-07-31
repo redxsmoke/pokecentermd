@@ -14,9 +14,6 @@ class Cart(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    #
-    # REQUIRED FIX: View Cart button calls this
-    #
     async def open_cart(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
@@ -71,9 +68,6 @@ class Cart(commands.Cog):
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
-    #
-    # UPDATED: /cart now calls open_cart()
-    #
     @discord.app_commands.command(name="cart", description="View your shopping cart.")
     async def cart(self, interaction: discord.Interaction):
         await self.open_cart(interaction)
@@ -108,6 +102,8 @@ class Cart(commands.Cog):
 
         embed.description = desc
         return embed
+
+
 class RemoveItemButton(discord.ui.Button):
     def __init__(self, bot, user_id, inventory_id, quantity):
         super().__init__(label=f"Remove #{inventory_id}", style=discord.ButtonStyle.danger)
@@ -195,6 +191,8 @@ class ClearCartButton(discord.ui.Button):
             color=discord.Color.green()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class RemoveUnavailableItemsButton(discord.ui.Button):
     def __init__(self, bot, user_id, unavailable_ids):
         super().__init__(label="Remove unavailable items", style=discord.ButtonStyle.danger)
@@ -239,6 +237,8 @@ class UnavailableItemsView(discord.ui.View):
             color=discord.Color.red()
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
 class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
     name = discord.ui.TextInput(label="Full Name", required=True)
     address = discord.ui.TextInput(label="Shipping Address", required=True)
@@ -262,7 +262,6 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
 
         async with self.bot.db.acquire() as conn:
 
-            # Release expired reservations
             await conn.execute(
                 """
                 UPDATE inventory
@@ -274,7 +273,6 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
                 """
             )
 
-            # REFRESH INVENTORY BEFORE RESERVATION (⭐ FIX)
             items = await conn.fetch(
                 """
                 SELECT c.inventory_id, c.quantity,
@@ -326,9 +324,6 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
 
         expires_at = datetime.datetime.utcnow() + datetime.timedelta(minutes=30)
 
-        #
-        # ⭐ FIXED RESERVATION SYSTEM
-        #
         async with self.bot.db.acquire() as conn:
             for i in items:
                 await conn.execute(
@@ -362,26 +357,63 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
             grand_total = total
 
         reservation_msg = (
-            "**Your cards are now reserved for 30 minutes — "
-            "if you do not submit your order, the items will be released.**"
+            "Your cards are now reserved for 15 minutes — "
+            "if you do not submit your order, the items will be released."
         )
 
+        # Build card list (sorted alphabetically)
+        sorted_items = sorted(items, key=lambda x: x["pokemon_name"].lower())
+
+        card_lines = []
+        for i in sorted_items:
+            price_each = float(i["price"])
+            qty = i["quantity"]
+            line_total = round(price_each * qty, 2)
+
+            card_lines.append(
+                f"• {i['pokemon_name']} — x{qty} @ ${price_each:.2f} = ${line_total:.2f}\n"
+                f"  Condition: {i['condition']}\n"
+                f"  Series: {i['series']}\n"
+                f"  Set: {i['set_name']}\n"
+            )
+
+        card_list_text = "\n".join(card_lines)
+
         embed = discord.Embed(
-            title="Confirm Your Order",
+            title="Review Your Order",
             color=discord.Color.green()
         )
 
-        embed.description = (
-            f"**Name:** {self.name.value}\n"
-            f"**Address:** {self.address.value}\n"
-            f"**Shipping:** {shipping_label}\n"
-            f"**Payment Method:** {self.payment_method.capitalize()}\n\n"
-            f"**Subtotal:** ${subtotal:.2f}\n"
-            f"**Tax:** ${tax:.2f}\n"
-            f"**Shipping:** ${shipping_cost:.2f}\n"
-            f"**PayPal Fee:** ${paypal_fee:.2f}\n"
-            f"**Grand Total:** ${grand_total:.2f}\n\n"
-            f"{reservation_msg}\n"
+        embed.add_field(
+            name="🧍 Customer Information",
+            value=f"**Name:** {self.name.value}\n**Address:** {self.address.value}",
+            inline=False
+        )
+
+        embed.add_field(
+            name="🛒 Order Information",
+            value=card_list_text,
+            inline=False
+        )
+
+        embed.add_field(
+            name="🚚 Payment & Shipping Information",
+            value=(
+                f"**Shipping:** {shipping_label}\n"
+                f"**Payment Method:** {self.payment_method.capitalize()}\n\n"
+                f"**Subtotal:** ${subtotal:.2f}\n"
+                f"**Tax:** ${tax:.2f}\n"
+                f"**Shipping:** ${shipping_cost:.2f}\n"
+                f"**PayPal Fee:** ${paypal_fee:.2f}\n"
+                f"**Grand Total:** ${grand_total:.2f}"
+            ),
+            inline=False
+        )
+
+        embed.add_field(
+            name="⏳ Reservation Notice",
+            value=reservation_msg,
+            inline=False
         )
 
         view = FinalizeOrderView(
@@ -398,7 +430,6 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
         )
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
 
 
 class CheckoutStartView(discord.ui.View):
@@ -484,6 +515,8 @@ class CheckoutStartView(discord.ui.View):
             self.payment_method
         )
         await interaction.response.send_modal(modal)
+
+
 class CartView(discord.ui.View):
     def __init__(self, bot, user_id, pages):
         super().__init__(timeout=180)
@@ -538,7 +571,7 @@ class FinalizeOrderView(discord.ui.View):
         subtotal, tax, shipping_cost, shipping_label,
         payment_method, name, address
     ):
-        super().__init__(timeout=180)
+        super().__init__(timeout=900)  # 15 minutes
         self.bot = bot
         self.user_id = user_id
         self.items = items
@@ -553,20 +586,99 @@ class FinalizeOrderView(discord.ui.View):
         self.total_before_shipping = subtotal + tax
         self.total = round(self.total_before_shipping + shipping_cost, 2)
 
-        # FIXED: paypal_fee must exist in BOTH branches
         if payment_method == "paypal":
             paypal_fee = round(self.total_before_shipping * 0.04, 2)
             self.paypal_fee = paypal_fee
             self.grand_total = round(self.total + paypal_fee, 2)
         else:
-            paypal_fee = 0
             self.paypal_fee = 0
             self.grand_total = self.total
 
-    @discord.ui.button(label="Submit Order", style=discord.ButtonStyle.success)
-    async def submit(self, interaction, button):
+        self.message = None
 
-        # CREATE ORDER
+
+    async def on_timeout(self):
+        async with self.bot.db.acquire() as conn:
+
+            # Release inventory
+            for i in self.items:
+                await conn.execute(
+                    """
+                    UPDATE inventory
+                    SET quantity_available = quantity_available + $2,
+                        reserved = GREATEST(reserved - $2, 0),
+                        reserved_until = NULL
+                    WHERE inventory_id = $1;
+                    """,
+                    i["inventory_id"],
+                    i["quantity"]
+                )
+
+            # Clear cart
+            await conn.execute(
+                "DELETE FROM cart_items WHERE user_id = $1;",
+                self.user_id
+            )
+
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+
+        # Edit original message
+        if self.message:
+            try:
+                await self.message.edit(
+                    content="⏰ **Order timed out** — items were released.",
+                    view=self
+                )
+            except:
+                pass
+
+        # DM user
+        try:
+            user = await self.bot.fetch_user(self.user_id)
+
+            card_lines = [
+                f"• {i['pokemon_name']} — x{i['quantity']}"
+                for i in sorted(self.items, key=lambda x: x["pokemon_name"].lower())
+            ]
+            card_text = "\n".join(card_lines)
+
+            await user.send(
+                embed=discord.Embed(
+                    title="Order Cancelled",
+                    description=(
+                        "**Your checkout session expired before the order was submitted.**\n\n"
+                        "The following items were released:\n\n"
+                        f"{card_text}\n\n"
+                        "If you still want these items, please add them to your cart again."
+                    ),
+                    color=discord.Color.red()
+                )
+            )
+        except:
+            pass
+
+
+    # =====================================================================
+    # SUBMIT ORDER BUTTON
+    # =====================================================================
+    @discord.ui.button(label="Submit Order", style=discord.ButtonStyle.success)
+    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        self.stop()  
+
+        self.message = interaction.message
+        button.disabled = True
+        self.children[1].disabled = True  # Cancel button
+
+        # Update message
+        if interaction.response.is_done():
+            await interaction.followup.edit_message(view=self)
+        else:
+            await interaction.response.edit_message(view=self)
+
+        # Create order (does NOT touch inventory)
         await interaction.client.get_cog("MyOrders").create_order(
             interaction,
             self.user_id,
@@ -583,24 +695,107 @@ class FinalizeOrderView(discord.ui.View):
             self.payment_method
         )
 
-        # CLEAR CART + RELEASE RESERVED INVENTORY
+        # Clear cart ONLY
         async with interaction.client.db.acquire() as conn:
-
-            # Release reserved inventory
             await conn.execute(
-                """
-                UPDATE inventory
-                SET quantity_available = quantity_available + reserved,
-                    reserved = 0,
-                    reserved_until = NULL
-                WHERE inventory_id IN (
-                    SELECT inventory_id FROM cart_items WHERE user_id = $1
-                );
-                """,
+                "DELETE FROM cart_items WHERE user_id = $1;",
                 self.user_id
             )
 
-            # Clear cart items
+        await interaction.followup.send(
+            "Order submitted! Your cart has been cleared.",
+            ephemeral=True
+        )
+
+
+    # =====================================================================
+    # CANCEL ORDER BUTTON
+    # =====================================================================
+    @discord.ui.button(label="Cancel Order", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        self.stop()  
+
+        self.message = interaction.message
+
+        # Release inventory + clear cart
+        async with self.bot.db.acquire() as conn:
+            for i in self.items:
+                await conn.execute(
+                    """
+                    UPDATE inventory
+                    SET quantity_available = quantity_available + $2,
+                        reserved = GREATEST(reserved - $2, 0),
+                        reserved_until = NULL
+                    WHERE inventory_id = $1;
+                    """,
+                    i["inventory_id"],
+                    i["quantity"]
+                )
+
+            await conn.execute(
+                "DELETE FROM cart_items WHERE user_id = $1;",
+                self.user_id
+            )
+
+        # Disable buttons
+        for child in self.children:
+            child.disabled = True
+
+        # Build card list
+        sorted_items = sorted(self.items, key=lambda x: x["pokemon_name"].lower())
+        card_text = "\n".join(
+            f"• {i['pokemon_name']} — x{i['quantity']}" for i in sorted_items
+        )
+
+        # DM user
+        try:
+            user = await self.bot.fetch_user(self.user_id)
+            await user.send(
+                embed=discord.Embed(
+                    title="Order Cancelled",
+                    description=(
+                        "You cancelled your order.\n\n"
+                        "The following items were released:\n\n"
+                        f"{card_text}\n\n"
+                        "If you still want these items, please add them to your cart again."
+                    ),
+                    color=discord.Color.red()
+                )
+            )
+        except:
+            pass
+
+        # Update original message
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="Order Cancelled",
+                description="Your order was cancelled and all items were released.",
+                color=discord.Color.red()
+            ),
+            view=self
+        )
+
+
+    @discord.ui.button(label="Cancel Order", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        self.message = interaction.message
+
+        async with self.bot.db.acquire() as conn:
+            for i in self.items:
+                await conn.execute(
+                    """
+                    UPDATE inventory
+                    SET quantity_available = quantity_available + $2,
+                        reserved = GREATEST(reserved - $2, 0),
+                        reserved_until = NULL
+                    WHERE inventory_id = $1;
+                    """,
+                    i["inventory_id"],
+                    i["quantity"]
+                )
+
             await conn.execute(
                 """
                 DELETE FROM cart_items
@@ -609,15 +804,41 @@ class FinalizeOrderView(discord.ui.View):
                 self.user_id
             )
 
-        await interaction.response.send_message(
-            "Order submitted! Your cart has been cleared.",
-            ephemeral=True
+        for child in self.children:
+            child.disabled = True
+
+        sorted_items = sorted(self.items, key=lambda x: x["pokemon_name"].lower())
+        card_text = "\n".join(
+            f"• {i['pokemon_name']} — x{i['quantity']}" for i in sorted_items
         )
 
+        try:
+            user = await self.bot.fetch_user(self.user_id)
+            await user.send(
+                embed=discord.Embed(
+                    title="Order Cancelled",
+                    description=(
+                        "You cancelled your order.\n\n"
+                        "The following items were released:\n\n"
+                        f"{card_text}\n\n"
+                        "If you still want these items, please add them to your cart again."
+                    ),
+                    color=discord.Color.red()
+                )
+            )
+        except:
+            pass
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="Order Cancelled",
+                description="Your order was cancelled and all items were released.",
+                color=discord.Color.red()
+            ),
+            view=self
+        )
 async def setup(bot):
     await bot.add_cog(Cart(bot))
-
-
 
 
 

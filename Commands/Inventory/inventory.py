@@ -3,7 +3,10 @@ from discord import app_commands
 from discord.ext import commands
 import os
 
-from Commands.Cart.cart import CheckoutStartView  # ✅ needed for Checkout button
+# 🔥 FIXED — import module, not variables
+import shop_state
+
+from Commands.Cart.cart import CheckoutStartView
 
 
 class Inventory(commands.Cog):
@@ -25,6 +28,32 @@ class Inventory(commands.Cog):
         set_name: str = None
     ):
         await interaction.response.defer(ephemeral=True)
+
+        # ----------------------------------------------------
+        # 🔥 SHOP CLOSED CHECK — now embedded
+        # ----------------------------------------------------
+        if not shop_state.SHOP_OPEN:
+            if shop_state.SHOP_CLOSE_REASON == "show":
+                desc = (
+                    "We are currently **at a show**, and the shop is temporarily closed to "
+                    "prevent orders of items that may be sold at the event.\n\n"
+                    "Please check back after the show to see what's available and view new items!"
+                )
+            else:
+                desc = (
+                    "The shop is currently **undergoing maintenance**.\n\n"
+                    "Please try again later once improvements are complete."
+                )
+
+            embed = discord.Embed(
+                title="🚫 Shop Closed",
+                description=desc,
+                color=discord.Color.red()
+            )
+
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+        # ----------------------------------------------------
 
         filters = {}
         rows = await self.run_query(
@@ -196,6 +225,7 @@ class Inventory(commands.Cog):
             page_files.append(image_path)
 
         return pages, page_files, inventory_ids
+
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, page_files, inventory_ids, filter_options):
             super().__init__(timeout=180)
@@ -404,6 +434,7 @@ class Inventory(commands.Cog):
             if self.page < len(self.pages) - 1:
                 self.page += 1
             await self.update(interaction)
+
     class FilterTypeView(discord.ui.View):
         def __init__(
             self,
@@ -531,7 +562,7 @@ class Inventory(commands.Cog):
                 embed=embed,
                 view=view
             )
+
+
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
-
-
