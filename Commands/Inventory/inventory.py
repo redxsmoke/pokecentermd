@@ -3,7 +3,6 @@ from discord import app_commands
 from discord.ext import commands
 import os
 
-# 🔥 FIXED — import module, not variables
 import shop_state
 
 from Commands.Cart.cart import CheckoutStartView
@@ -30,7 +29,7 @@ class Inventory(commands.Cog):
         await interaction.response.defer(ephemeral=True)
 
         # ----------------------------------------------------
-        # 🔥 SHOP CLOSED CHECK — now embedded
+        # SHOP CLOSED CHECK
         # ----------------------------------------------------
         if not shop_state.SHOP_OPEN:
             if shop_state.SHOP_CLOSE_REASON == "show":
@@ -110,7 +109,6 @@ class Inventory(commands.Cog):
             files=files,
             ephemeral=True
         )
-
     async def run_query(self, pokemon_name=None, set_name=None, filters=None):
         where_clauses = ["quantity_available >= 1"]
         params = []
@@ -185,8 +183,11 @@ class Inventory(commands.Cog):
         for row in rows:
             inventory_ids.append(row["inventory_id"])
 
+            card_number = row["card_number"] or "—"
+            title = f"{row['pokemon_name']} #{card_number} — {row['set_name']}"
+
             embed = discord.Embed(
-                title=f"{row['pokemon_name']} — {row['set_name']}",
+                title=title,
                 color=discord.Color.gold()
             )
 
@@ -202,21 +203,10 @@ class Inventory(commands.Cog):
 
             graded_text = "Yes" if row["graded"] else "No"
 
-            details = f"**Card Details**\n\n"
-            details += f"• **Expansion:** {row['series']}\n"
-            details += f"• **Set:** {row['set_name']}\n"
-            details += f"• **Condition:** {row['condition'] or 'Near Mint'}\n"
-            details += f"• **Price:** ${row['price']}\n"
-            details += f"• **Card #:** {row['card_number'] or '—'}\n"
-            details += f"• **Variant:** {row['variant'] or '—'}\n"
-            details += f"• **Rarity:** {row['rarity'] or '—'}\n"
-            details += f"• **Graded:** {graded_text}\n"
-
-            if row["graded"]:
-                details += f"• **Grading Company:** {row['grading_company']}\n"
-                details += f"• **Grade:** {row['grade']}\n"
-
-            details += "\n\n[Click Here](https://dextcg.com/users/redxsmoke/folders/99d3ec14-0435-419e-bf51-331a37821152?type=standard_v2) to view our inventory online."
+            details = "__**Card Details**__\n\n"
+            details += f"**Price:** ${row['price']}\n"
+            details += f"**Condition:** {row['condition'] or 'Near Mint'}\n"
+            details += f"**Graded:** {graded_text}\n"
 
             embed.description = details
             embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
@@ -225,7 +215,6 @@ class Inventory(commands.Cog):
             page_files.append(image_path)
 
         return pages, page_files, inventory_ids
-
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, page_files, inventory_ids, filter_options):
             super().__init__(timeout=180)
@@ -259,7 +248,25 @@ class Inventory(commands.Cog):
                 attachments=files
             )
 
-        @discord.ui.button(label="Filters", style=discord.ButtonStyle.primary)
+        # -------------------------
+        # ROW 0 — Prev / Next
+        # -------------------------
+        @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary, row=0)
+        async def previous(self, interaction, button):
+            if self.page > 0:
+                self.page -= 1
+            await self.update(interaction)
+
+        @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary, row=0)
+        async def next(self, interaction, button):
+            if self.page < len(self.pages) - 1:
+                self.page += 1
+            await self.update(interaction)
+
+        # -------------------------
+        # ROW 1 — Filters / Clear Filters
+        # -------------------------
+        @discord.ui.button(label="Filters", style=discord.ButtonStyle.secondary, row=1)
         async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             options = [
                 discord.SelectOption(label="Pokémon Name", value="pokemon_name"),
@@ -307,7 +314,7 @@ class Inventory(commands.Cog):
                 attachments=files
             )
 
-        @discord.ui.button(label="🧹 Clear Filters", style=discord.ButtonStyle.secondary)
+        @discord.ui.button(label="🧹 Clear Filters", style=discord.ButtonStyle.secondary, row=1)
         async def clear_filters(self, interaction, button):
             self.filters.clear()
             rows = await self.bot.get_cog("Inventory").run_query(
@@ -330,8 +337,10 @@ class Inventory(commands.Cog):
             self.pages, self.page_files, self.inventory_ids = self.bot.get_cog("Inventory").build_pages(rows)
             self.page = 0
             await self.update(interaction)
-
-        @discord.ui.button(label="🛒 Add to Cart", style=discord.ButtonStyle.success)
+        # -------------------------
+        # ROW 2 — Add to Cart / More Info
+        # -------------------------
+        @discord.ui.button(label="🛒 Add to Cart", style=discord.ButtonStyle.success, row=2)
         async def add_to_cart(self, interaction, button):
             await interaction.response.defer(ephemeral=True)
 
@@ -423,18 +432,33 @@ class Inventory(commands.Cog):
 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-        @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary)
-        async def previous(self, interaction, button):
-            if self.page > 0:
-                self.page -= 1
-            await self.update(interaction)
+        @discord.ui.button(label="View More Info", style=discord.ButtonStyle.primary, row=2)
+        async def view_more_info(self, interaction, button):
+            inventory_id = self.inventory_ids[self.page]
 
-        @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary)
-        async def next(self, interaction, button):
-            if self.page < len(self.pages) - 1:
-                self.page += 1
-            await self.update(interaction)
+            async with self.bot.db.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT series, set_name, variant, rarity
+                    FROM inventory
+                    WHERE inventory_id = $1;
+                    """,
+                    inventory_id
+                )
 
+            embed = discord.Embed(
+                title="More Information",
+                color=discord.Color.blue()
+            )
+
+            embed.description = (
+                f"**Expansion:** {row['series']}\n"
+                f"**Set:** {row['set_name']}\n"
+                f"**Variant:** {row['variant'] or '—'}\n"
+                f"**Rarity:** {row['rarity'] or '—'}\n"
+            )
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
     class FilterTypeView(discord.ui.View):
         def __init__(
             self,
@@ -566,3 +590,7 @@ class Inventory(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
+
+
+
+
