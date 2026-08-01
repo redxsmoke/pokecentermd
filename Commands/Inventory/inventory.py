@@ -7,6 +7,8 @@ import shop_state
 
 from Commands.Cart.cart import CheckoutStartView
 
+GALLERY_PAGE_SIZE = 6  # Number of cards per page
+
 
 class Inventory(commands.Cog):
     def __init__(self, bot):
@@ -70,7 +72,7 @@ class Inventory(commands.Cog):
             await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
-        pages, page_files, inventory_ids = self.build_pages(rows)
+        pages, inventory_ids = self.build_gallery_pages(rows)
 
         conditions = await self.get_distinct_values("condition")
         series_list = await self.get_distinct_values("series")
@@ -90,25 +92,24 @@ class Inventory(commands.Cog):
             base_set_name=set_name,
             filters=filters,
             pages=pages,
-            page_files=page_files,
             inventory_ids=inventory_ids,
             filter_options=filter_options
         )
 
-        first_page = pages[0]
-        first_page.set_footer(text=f"Result 1/{len(pages)}")
+        embeds, files = pages[0]
 
-        files = []
-        if page_files[0]:
-            files = [discord.File(page_files[0], filename="card.jpg")]
-            first_page.set_image(url="attachment://card.jpg")
+        discord_files = [
+            discord.File(path, filename=filename)
+            for path, filename in files
+        ]
 
         await interaction.followup.send(
-            embed=first_page,
+            embeds=embeds,
+            files=discord_files,
             view=view,
-            files=files,
             ephemeral=True
         )
+
     async def run_query(self, pokemon_name=None, set_name=None, filters=None):
         where_clauses = ["quantity_available >= 1"]
         params = []
@@ -121,6 +122,9 @@ class Inventory(commands.Cog):
             where_clauses.append(f"set_name ILIKE ${len(params)+1}")
             params.append(f"%{set_name}%")
 
+        # -----------------------------
+        # FILTER LOGIC (UPDATED)
+        # -----------------------------
         if filters:
             bucket = filters.get("pokemon_name_bucket")
             if bucket == "AF":
@@ -147,6 +151,31 @@ class Inventory(commands.Cog):
             if filters.get("rarity"):
                 where_clauses.append(f"rarity = ${len(params)+1}")
                 params.append(filters["rarity"])
+
+            if filters.get("set_name"):
+                where_clauses.append(f"set_name = ${len(params)+1}")
+                params.append(filters["set_name"])
+
+            # -----------------------------
+            # NEW FILTERS: SET LIST A–L
+            # -----------------------------
+            if filters.get("set_bucket_AL"):
+                where_clauses.append("""
+                    (
+                        LEFT(set_name, 1) ~* '^[A-L]'
+                    )
+                """)
+
+            # -----------------------------
+            # NEW FILTERS: SET LIST M–Z (INCLUDES 151)
+            # -----------------------------
+            if filters.get("set_bucket_MZ"):
+                where_clauses.append("""
+                    (
+                        LEFT(set_name, 1) ~* '^[M-Z]'
+                        OR set_name = '151'
+                    )
+                """)
 
         query = f"""
             SELECT inventory_id, csv_id, pokemon_name, series, set_name,
@@ -175,31 +204,43 @@ class Inventory(commands.Cog):
             rows = await conn.fetch(query)
         return [r[column_name] for r in rows]
 
-    def build_pages(self, rows):
+    # ------------------------------------------------------------
+    # GALLERY PAGE BUILDER (LOCAL PNG/JPG SUPPORT + 151 PATCH)
+    # ------------------------------------------------------------
+    def build_gallery_pages(self, rows):
         pages = []
-        page_files = []
         inventory_ids = []
 
-        for row in rows:
+        current_page_embeds = []
+        current_page_files = []
+
+        for index, row in enumerate(rows):
             inventory_ids.append(row["inventory_id"])
 
             card_number = row["card_number"] or "—"
-            title = f"{row['pokemon_name']} #{card_number} — {row['set_name']}"
+
+            # -----------------------------
+            # SPECIAL DISPLAY PATCH FOR SET "151"
+            # -----------------------------
+            set_display = row["set_name"]
+            if set_display == "151":
+                set_display = "Mew 151"
+
+            title = f"{row['pokemon_name']} #{card_number} — {set_display}"
 
             embed = discord.Embed(
                 title=title,
                 color=discord.Color.gold()
             )
 
-            image_path = None
-            if row["image_link"]:
-                if row["image_link"].startswith(("http://", "https://")):
-                    embed.set_image(url=row["image_link"])
-                else:
-                    local_path = row["image_link"].replace("\\", "/")
-                    if os.path.exists(local_path):
-                        image_path = local_path
-                        embed.set_image(url="attachment://card.jpg")
+            # LOCAL IMAGE SUPPORT
+            img = row["image_link"]
+            if img and isinstance(img, str):
+                local_path = img.replace("\\", "/")
+                if os.path.exists(local_path):
+                    filename = f"card_{index}.jpg"
+                    embed.set_thumbnail(url=f"attachment://{filename}")
+                    current_page_files.append((local_path, filename))
 
             graded_text = "Yes" if row["graded"] else "No"
 
@@ -211,45 +252,125 @@ class Inventory(commands.Cog):
             embed.description = details
             embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
 
-            pages.append(embed)
-            page_files.append(image_path)
+            current_page_embeds.append(embed)
 
-        return pages, page_files, inventory_ids
+            if len(current_page_embeds) == GALLERY_PAGE_SIZE:
+                pages.append((current_page_embeds, current_page_files))
+                current_page_embeds = []
+                current_page_files = []
+
+        if current_page_embeds:
+            pages.append((current_page_embeds, current_page_files))
+
+        return pages, inventory_ids
+    # ------------------------------------------------------------
+    # UPDATED VIEW — 4 ROWS (ERROR-FREE)
+    # ------------------------------------------------------------
     class InventoryView(discord.ui.View):
-        def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, page_files, inventory_ids, filter_options):
+        def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, inventory_ids, filter_options):
             super().__init__(timeout=180)
             self.bot = bot
             self.base_pokemon_name = base_pokemon_name
             self.base_set_name = base_set_name
             self.filters = filters
             self.pages = pages
-            self.page_files = page_files
             self.inventory_ids = inventory_ids
             self.page = 0
             self.filter_options = filter_options
 
+            self.build_dropdowns()
+
+        def build_dropdowns(self):
+            """Build dropdowns for Add to Cart + More Info."""
+            self.clear_items()
+
+            embeds, _ = self.pages[self.page]
+            start_index = self.page * GALLERY_PAGE_SIZE
+
+            # Build dropdown options
+            options = []
+            for i, embed in enumerate(embeds):
+                inv_id = self.inventory_ids[start_index + i]
+                label = embed.title
+                options.append(
+                    discord.SelectOption(
+                        label=label,
+                        value=str(inv_id)
+                    )
+                )
+
+            # -----------------------------
+            # ROW 0 — NAVIGATION BUTTONS
+            # -----------------------------
+            self.previous.row = 0
+            self.next.row = 0
+            self.add_item(self.previous)
+            self.add_item(self.next)
+
+            # -----------------------------
+            # ROW 1 — ADD TO CART DROPDOWN
+            # -----------------------------
+            add_to_cart_dropdown = discord.ui.Select(
+                placeholder="Add to Cart — Select a Card",
+                min_values=1,
+                max_values=1,
+                options=options,
+                row=1
+            )
+
+            async def add_to_cart_callback(interaction: discord.Interaction):
+                inv_id = int(add_to_cart_dropdown.values[0])
+                await self.add_to_cart(interaction, inv_id)
+
+            add_to_cart_dropdown.callback = add_to_cart_callback
+            self.add_item(add_to_cart_dropdown)
+
+            # -----------------------------
+            # ROW 2 — MORE INFO DROPDOWN
+            # -----------------------------
+            more_info_dropdown = discord.ui.Select(
+                placeholder="View More Info — Select a Card",
+                min_values=1,
+                max_values=1,
+                options=options,
+                row=2
+            )
+
+            async def more_info_callback(interaction: discord.Interaction):
+                inv_id = int(more_info_dropdown.values[0])
+                await self.view_more_info(interaction, inv_id)
+
+            more_info_dropdown.callback = more_info_callback
+            self.add_item(more_info_dropdown)
+
+            # -----------------------------
+            # ROW 3 — FILTER BUTTONS
+            # -----------------------------
+            self.filters_button.row = 3
+            self.clear_filters.row = 3
+
+            self.add_item(self.filters_button)
+            self.add_item(self.clear_filters)
+
         async def update(self, interaction):
-            embed = self.pages[self.page]
-            embed.set_footer(text=f"Result {self.page+1}/{len(self.pages)}")
+            """Update embeds + attachments + rebuild dropdowns."""
+            embeds, files = self.pages[self.page]
 
-            files = []
-            image_path = self.page_files[self.page]
+            discord_files = [
+                discord.File(path, filename=filename)
+                for path, filename in files
+            ]
 
-            if image_path:
-                try:
-                    files = [discord.File(image_path, filename="card.jpg")]
-                    embed.set_image(url="attachment://card.jpg")
-                except Exception as e:
-                    print(f"Image reload failed: {e}")
+            self.build_dropdowns()
 
             await interaction.response.edit_message(
-                embed=embed,
-                view=self,
-                attachments=files
+                embeds=embeds,
+                attachments=discord_files,
+                view=self
             )
 
         # -------------------------
-        # ROW 0 — Prev / Next
+        # NAVIGATION BUTTONS (ROW 0)
         # -------------------------
         @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary, row=0)
         async def previous(self, interaction, button):
@@ -264,9 +385,9 @@ class Inventory(commands.Cog):
             await self.update(interaction)
 
         # -------------------------
-        # ROW 1 — Filters / Clear Filters
+        # FILTER BUTTONS (ROW 3)
         # -------------------------
-        @discord.ui.button(label="Filters", style=discord.ButtonStyle.secondary, row=1)
+        @discord.ui.button(label="Filters", style=discord.ButtonStyle.secondary, row=3)
         async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             options = [
                 discord.SelectOption(label="Pokémon Name", value="pokemon_name"),
@@ -289,32 +410,25 @@ class Inventory(commands.Cog):
                 base_set_name=self.base_set_name,
                 filters=self.filters,
                 pages=self.pages,
-                page_files=self.page_files,
                 inventory_ids=self.inventory_ids,
                 current_page=self.page,
                 filter_options=self.filter_options,
                 filter_type_select=filter_type_select
             )
 
-            embed = self.pages[self.page]
-            embed.set_footer(text=f"Result {self.page+1}/{len(self.pages)}")
-
-            files = []
-            image_path = self.page_files[self.page]
-            if image_path:
-                try:
-                    files = [discord.File(image_path, filename="card.jpg")]
-                    embed.set_image(url="attachment://card.jpg")
-                except Exception as e:
-                    print(f"Image reload failed: {e}")
+            embeds, files = self.pages[self.page]
+            discord_files = [
+                discord.File(path, filename=filename)
+                for path, filename in files
+            ]
 
             await interaction.response.edit_message(
-                embed=embed,
-                view=view,
-                attachments=files
+                embeds=embeds,
+                attachments=discord_files,
+                view=view
             )
 
-        @discord.ui.button(label="🧹 Clear Filters", style=discord.ButtonStyle.secondary, row=1)
+        @discord.ui.button(label="🧹 Clear Filters", style=discord.ButtonStyle.secondary, row=3)
         async def clear_filters(self, interaction, button):
             self.filters.clear()
             rows = await self.bot.get_cog("Inventory").run_query(
@@ -334,17 +448,15 @@ class Inventory(commands.Cog):
                 )
                 return
 
-            self.pages, self.page_files, self.inventory_ids = self.bot.get_cog("Inventory").build_pages(rows)
+            self.pages, self.inventory_ids = self.bot.get_cog("Inventory").build_gallery_pages(rows)
             self.page = 0
             await self.update(interaction)
-        # -------------------------
-        # ROW 2 — Add to Cart / More Info
-        # -------------------------
-        @discord.ui.button(label="🛒 Add to Cart", style=discord.ButtonStyle.success, row=2)
-        async def add_to_cart(self, interaction, button):
-            await interaction.response.defer(ephemeral=True)
 
-            inventory_id = self.inventory_ids[self.page]
+        # -------------------------
+        # ADD TO CART CALLBACK
+        # -------------------------
+        async def add_to_cart(self, interaction, inventory_id):
+            await interaction.response.defer(ephemeral=True)
 
             async with self.bot.db.acquire() as conn:
                 inv = await conn.fetchrow(
@@ -432,10 +544,10 @@ class Inventory(commands.Cog):
 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
-        @discord.ui.button(label="View More Info", style=discord.ButtonStyle.primary, row=2)
-        async def view_more_info(self, interaction, button):
-            inventory_id = self.inventory_ids[self.page]
-
+        # -------------------------
+        # MORE INFO CALLBACK
+        # -------------------------
+        async def view_more_info(self, interaction, inventory_id):
             async with self.bot.db.acquire() as conn:
                 row = await conn.fetchrow(
                     """
@@ -459,6 +571,10 @@ class Inventory(commands.Cog):
             )
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    # ------------------------------------------------------------
+    # FILTER TYPE VIEW — WITH SERIES → SET FILTER
+    # ------------------------------------------------------------
     class FilterTypeView(discord.ui.View):
         def __init__(
             self,
@@ -467,7 +583,6 @@ class Inventory(commands.Cog):
             base_set_name,
             filters,
             pages,
-            page_files,
             inventory_ids,
             current_page,
             filter_options,
@@ -479,7 +594,6 @@ class Inventory(commands.Cog):
             self.base_set_name = base_set_name
             self.filters = filters
             self.pages = pages
-            self.page_files = page_files
             self.inventory_ids = inventory_ids
             self.page = current_page
             self.filter_options = filter_options
@@ -493,6 +607,8 @@ class Inventory(commands.Cog):
             self.add_item(self.filter_type_select)
 
         async def show_filter_options(self, interaction: discord.Interaction, filter_type: str):
+
+            # Pokémon name buckets
             if filter_type == "pokemon_name":
                 options = [
                     discord.SelectOption(label="A–F", value="AF"),
@@ -500,6 +616,17 @@ class Inventory(commands.Cog):
                     discord.SelectOption(label="N–S", value="NS"),
                     discord.SelectOption(label="T–Z", value="TZ"),
                 ]
+
+            # SERIES → SET FILTER
+            elif filter_type == "series":
+                # Get all distinct series
+                series_list = self.filter_options.get("series", [])
+                options = [
+                    discord.SelectOption(label=str(s), value=str(s))
+                    for s in series_list
+                ]
+
+            # Standard filters
             else:
                 values = self.filter_options.get(filter_type, [])
                 options = [
@@ -517,8 +644,113 @@ class Inventory(commands.Cog):
             async def filter_value_callback(inter: discord.Interaction):
                 value = filter_value_select.values[0]
 
+                # Pokémon name bucket
                 if filter_type == "pokemon_name":
                     self.filters["pokemon_name_bucket"] = value
+
+                # SERIES → SET (Step 1: Series chosen)
+                elif filter_type == "series":
+                    self.filters["series"] = value
+
+                    # Fetch sets inside this series
+                    async with self.bot.db.acquire() as conn:
+                        rows = await conn.fetch(
+                            """
+                            SELECT DISTINCT set_name
+                            FROM inventory
+                            WHERE series = $1
+                            ORDER BY set_name ASC;
+                            """,
+                            value
+                        )
+
+                    set_options = []
+                    for r in rows:
+                        set_name = r["set_name"]
+                        if set_name == "151":
+                            set_name_display = "Mew 151"
+                        else:
+                            set_name_display = set_name
+
+                        set_options.append(
+                            discord.SelectOption(
+                                label=set_name_display,
+                                value=set_name
+                            )
+                        )
+
+                    # Build second dropdown for sets
+                    set_select = discord.ui.Select(
+                        placeholder="Select a Set",
+                        min_values=1,
+                        max_values=1,
+                        options=set_options
+                    )
+
+                    async def set_select_callback(inter2: discord.Interaction):
+                        chosen_set = set_select.values[0]
+                        self.filters["set_name"] = chosen_set
+
+                        rows2 = await self.bot.get_cog("Inventory").run_query(
+                            pokemon_name=self.base_pokemon_name,
+                            set_name=self.base_set_name,
+                            filters=self.filters
+                        )
+
+                        if not rows2:
+                            embed = discord.Embed(
+                                title="Filters",
+                                description="No results with that filter.",
+                                color=discord.Color.gold()
+                            )
+                            await inter2.response.send_message(embed=embed, ephemeral=True)
+                            return
+
+                        self.pages, self.inventory_ids = (
+                            self.bot.get_cog("Inventory").build_gallery_pages(rows2)
+                        )
+                        self.page = 0
+
+                        main_view = Inventory.InventoryView(
+                            bot=self.bot,
+                            base_pokemon_name=self.base_pokemon_name,
+                            base_set_name=self.base_set_name,
+                            filters=self.filters,
+                            pages=self.pages,
+                            inventory_ids=self.inventory_ids,
+                            filter_options=self.filter_options
+                        )
+
+                        embeds, files = self.pages[self.page]
+                        discord_files = [
+                            discord.File(path, filename=filename)
+                            for path, filename in files
+                        ]
+
+                        await inter2.response.edit_message(
+                            embeds=embeds,
+                            attachments=discord_files,
+                            view=main_view
+                        )
+
+                    set_select.callback = set_select_callback
+
+                    view2 = discord.ui.View(timeout=180)
+                    view2.add_item(set_select)
+
+                    embed2 = discord.Embed(
+                        title="Select Set",
+                        description=f"Choose a set inside **{value}**.",
+                        color=discord.Color.blue()
+                    )
+
+                    await inter.response.edit_message(
+                        embed=embed2,
+                        view=view2
+                    )
+                    return
+
+                # Standard filters
                 else:
                     self.filters[filter_type] = value
 
@@ -537,8 +769,8 @@ class Inventory(commands.Cog):
                     await inter.response.send_message(embed=embed, ephemeral=True)
                     return
 
-                self.pages, self.page_files, self.inventory_ids = (
-                    self.bot.get_cog("Inventory").build_pages(rows)
+                self.pages, self.inventory_ids = (
+                    self.bot.get_cog("Inventory").build_gallery_pages(rows)
                 )
                 self.page = 0
 
@@ -548,27 +780,20 @@ class Inventory(commands.Cog):
                     base_set_name=self.base_set_name,
                     filters=self.filters,
                     pages=self.pages,
-                    page_files=self.page_files,
                     inventory_ids=self.inventory_ids,
                     filter_options=self.filter_options
                 )
 
-                embed = self.pages[self.page]
-                embed.set_footer(text=f"Result {self.page+1}/{len(self.pages)}")
-
-                files = []
-                image_path = self.page_files[self.page]
-                if image_path:
-                    try:
-                        files = [discord.File(image_path, filename="card.jpg")]
-                        embed.set_image(url="attachment://card.jpg")
-                    except Exception as e:
-                        print(f"Image reload failed: {e}")
+                embeds, files = self.pages[self.page]
+                discord_files = [
+                    discord.File(path, filename=filename)
+                    for path, filename in files
+                ]
 
                 await inter.response.edit_message(
-                    embed=embed,
-                    view=main_view,
-                    attachments=files
+                    embeds=embeds,
+                    attachments=discord_files,
+                    view=main_view
                 )
 
             filter_value_select.callback = filter_value_callback
@@ -590,7 +815,4 @@ class Inventory(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(Inventory(bot))
-
-
-
 
