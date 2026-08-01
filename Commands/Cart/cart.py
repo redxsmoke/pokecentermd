@@ -104,56 +104,105 @@ class Cart(commands.Cog):
         return embed
 
 
-class RemoveItemButton(discord.ui.Button):
-    def __init__(self, bot, user_id, inventory_id, quantity):
-        super().__init__(label=f"Remove #{inventory_id}", style=discord.ButtonStyle.danger)
+class RemoveItemSelect(discord.ui.Select):
+    def __init__(self, bot, user_id, items):
+        options = [
+            discord.SelectOption(label="🗑️ Remove All Cards", value="clear_all")
+        ]
+
+        for r in items:
+            options.append(
+                discord.SelectOption(
+                    label=f"Remove #{r['inventory_id']} — {r['pokemon_name']}",
+                    value=str(r["inventory_id"])
+                )
+            )
+
+        super().__init__(
+            placeholder="Remove Card(s)...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
         self.bot = bot
         self.user_id = user_id
-        self.inventory_id = inventory_id
-        self.quantity = quantity
+        self.items = items
 
     async def callback(self, interaction: discord.Interaction):
+
+        choice = self.values[0]
+
         async with self.bot.db.acquire() as conn:
 
-            await conn.execute(
-                "DELETE FROM cart_items WHERE user_id = $1 AND inventory_id = $2;",
-                self.user_id, self.inventory_id
-            )
-
-            row = await conn.fetchrow(
-                """
-                SELECT reserved
-                FROM inventory
-                WHERE inventory_id = $1;
-                """,
-                self.inventory_id
-            )
-
-            reserved = row["reserved"]
-
-            if reserved > 0:
+            # CLEAR ALL
+            if choice == "clear_all":
                 await conn.execute(
                     """
                     UPDATE inventory
-                    SET reserved = reserved - $1,
-                        quantity_available = quantity_available + $1,
-                        reserved_until = CASE
-                            WHEN reserved - $1 <= 0 THEN NULL
-                            ELSE reserved_until
-                        END
-                    WHERE inventory_id = $2;
+                    SET quantity_available = quantity_available + reserved,
+                        reserved = 0,
+                        reserved_until = NULL
+                    WHERE inventory_id IN (
+                        SELECT inventory_id FROM cart_items WHERE user_id = $1
+                    );
                     """,
-                    self.quantity,
-                    self.inventory_id
+                    self.user_id
                 )
 
-        embed = discord.Embed(
-            title="Item Removed",
-            description=f"Removed item #{self.inventory_id} from your cart.",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+                await conn.execute(
+                    "DELETE FROM cart_items WHERE user_id = $1;",
+                    self.user_id
+                )
 
+                embed = discord.Embed(
+                    title="Cart Cleared",
+                    description="All items have been removed from your cart.",
+                    color=discord.Color.green()
+                )
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                return
+
+            # REMOVE SINGLE ITEM
+            inventory_id = int(choice)
+
+            # Get quantity for proper release
+            qty_row = await conn.fetchrow(
+                """
+                SELECT quantity FROM cart_items
+                WHERE user_id = $1 AND inventory_id = $2;
+                """,
+                self.user_id,
+                inventory_id
+            )
+
+            if qty_row:
+                qty = qty_row["quantity"]
+
+                await conn.execute(
+                    "DELETE FROM cart_items WHERE user_id = $1 AND inventory_id = $2;",
+                    self.user_id,
+                    inventory_id
+                )
+
+                await conn.execute(
+                    """
+                    UPDATE inventory
+                    SET reserved = GREATEST(reserved - $1, 0),
+                        quantity_available = quantity_available + $1,
+                        reserved_until = NULL
+                    WHERE inventory_id = $2;
+                    """,
+                    qty,
+                    inventory_id
+                )
+
+            embed = discord.Embed(
+                title="Item Removed",
+                description=f"Removed item #{inventory_id} from your cart.",
+                color=discord.Color.green()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 class ClearCartButton(discord.ui.Button):
     def __init__(self, bot, user_id):
@@ -525,10 +574,8 @@ class CartView(discord.ui.View):
         self.pages = pages
         self.page = 0
 
-        for r in pages[0]:
-            self.add_item(RemoveItemButton(bot, user_id, r["inventory_id"], r["quantity"]))
-
-        self.add_item(ClearCartButton(bot, user_id))
+        # Add dropdown instead of many remove buttons
+        self.add_item(RemoveItemSelect(bot, user_id, pages[0]))
 
     async def update(self, interaction):
         embed = interaction.client.get_cog("Cart").build_page_embed(
@@ -563,7 +610,6 @@ class CartView(discord.ui.View):
             color=discord.Color.blue()
         )
         await interaction.response.edit_message(embed=embed, view=view)
-
 
 class FinalizeOrderView(discord.ui.View):
     def __init__(
