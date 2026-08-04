@@ -338,21 +338,42 @@ class AdminCommands(commands.Cog):
 
                 elif action == "upload_csv":
 
-                    await inner_interaction.response.send_message(
-                        embed=discord.Embed(
-                            title="📄 CSV Upload Started",
-                            description=(
-                                "Your CSV upload has begun.\n\n"
-                                "Please allow some time for processing — especially on Railway.\n"
-                                "You will receive a confirmation message once the import is complete."
-                            ),
-                            color=discord.Color.blue()
+                    embed = discord.Embed(
+                        title="📄 CSV Upload Mode",
+                        description=(
+                            "Please upload your **CSV file** in this channel.\n\n"
+                            "**Supported formats:**\n"
+                            "• UTF‑16 CSV\n"
+                            "• UTF‑8 CSV\n"
+                            "• Semicolon‑delimited CSV\n\n"
+                            "**Required column headers:**\n"
+                            "• Name\n"
+                            "• Series\n"
+                            "• Set\n"
+                            "• Quantity\n"
+                            "• Price\n\n"
+                            "**Optional column headers:**\n"
+                            "• Variant\n"
+                            "• Rarity\n"
+                            "• Condition\n"
+                            "• ImageURL *(must be a direct image link ending in .jpg, .jpeg, .png, .gif, or .webp)*\n\n"
+                            "**ID Handling:**\n"
+                            "• You do **NOT** need to include an `Id` column.\n"
+                            "• The bot automatically assigns an ID based on the **CSV filename**.\n"
+                            "• All cards imported from the same CSV share this ID.\n\n"
+                            "**Inventory Display Rules:**\n"
+                            "• `/inventory` only displays cards where **Quantity ≥ 1**.\n"
+                            "• If you sell a card and want to keep the record, set **Quantity = 0**.\n"
+                            "• When you obtain a new copy, update Quantity back to **1** and your stored image will display again.\n\n"
+                            "**Image Notes:**\n"
+                            "• For images uploaded within Discord, **do NOT delete the message** containing the image.\n"
+                            "• If the message is deleted, the Discord CDN link breaks and the image will no longer display.\n\n"
+                            "Please upload your CSV file now."
                         ),
-                        ephemeral=True
+                        color=discord.Color.green()
                     )
 
-                    csv_cog: InventoryCSVImport = inner_interaction.client.get_cog("InventoryCSVImport")
-                    await csv_cog.start_csv_upload(inner_interaction)
+                    await inner_interaction.response.send_message(embed=embed, ephemeral=True)
                     return
 
                 elif action == "deactivate_single":

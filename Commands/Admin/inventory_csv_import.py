@@ -20,83 +20,38 @@ class InventoryCSVImport(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    async def start_csv_upload(self, interaction: discord.Interaction):
-        """
-        NEW FLOW:
-        CSV upload now happens IN THE ADMIN CHANNEL.
-        """
-
-        guild_id = interaction.guild.id
-
-        embed = discord.Embed(
-            title="📄 CSV Upload Mode",
-            description=(
-                "Please upload your **CSV file** in this channel.\n\n"
-                "**Supported formats:**\n"
-                "• UTF‑16 CSV\n"
-                "• UTF‑8 CSV\n"
-                "• Semicolon‑delimited CSV\n\n"
-                "**Required column headers:**\n"
-                "• Name\n"
-                "• Series\n"
-                "• Set\n"
-                "• Quantity\n"
-                "• Price\n\n"
-                "**Optional column headers:**\n"
-                "• Variant\n"
-                "• Rarity\n"
-                "• Condition\n"
-                "• ImageURL *(must be a direct image link ending in .jpg, .jpeg, .png, .gif, or .webp)*\n\n"
-                "**ID Handling:**\n"
-                "• You do **NOT** need to include an `Id` column.\n"
-                "• The bot automatically assigns an ID based on the **CSV filename**.\n"
-                "• All cards imported from the same CSV share this ID.\n\n"
-                "**Inventory Display Rules:**\n"
-                "• `/inventory` only displays cards where **Quantity ≥ 1**.\n"
-                "• If you sell a card and want to keep the record, set **Quantity = 0**.\n"
-                "• When you obtain a new copy, update Quantity back to **1** and your stored image will display again.\n\n"
-                "**Image Notes:**\n"
-                "• For images uploaded within Discord, **do NOT delete the message** containing the image.\n"
-                "• If the message is deleted, the Discord CDN link breaks and the image will no longer display.\n\n"
-                "Please upload your CSV file now."
-            ),
-            color=discord.Color.green()
-        )
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-
-
-        # Wait for CSV upload IN THIS CHANNEL
-        def check(message: discord.Message):
-            return (
-                message.guild is not None
-                and message.guild.id == guild_id
-                and message.author.id == interaction.user.id
-                and message.attachments
-                and message.attachments[0].filename.lower().endswith(".csv")
-            )
-
-        try:
-            csv_msg = await self.bot.wait_for("message", check=check, timeout=300)
-        except Exception:
-            timeout_embed = discord.Embed(
-                title="⏰ Upload Timed Out",
-                description="No CSV file was uploaded within 5 minutes. Please try again.",
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=timeout_embed, ephemeral=True)
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if message.author.bot:
             return
 
-        attachment = csv_msg.attachments[0]
+        # Only process CSV files
+        if not message.attachments:
+            return
+
+        attachment = message.attachments[0]
+        if not attachment.filename.lower().endswith(".csv"):
+            return
+
+        # Send immediate "processing" message
+        await message.channel.send(
+            embed=discord.Embed(
+                title="📄 CSV Received",
+                description="Processing your CSV now. Please allow some time for your CSV file to be processed. You will receive a confirmation message once it has completed.",
+                color=discord.Color.green()
+            )
+        )
+
+        # Download CSV
         csv_bytes = await attachment.read()
         csv_text = decode_csv_bytes(csv_bytes)
 
-        await self.process_csv(csv_msg, csv_text, attachment.filename)
+        # Process CSV
+        await self.process_csv(message, csv_text, attachment.filename)
 
     async def process_csv(self, msg: discord.Message, csv_text: str, filename: str):
 
-        guild_id = msg.guild.id  # ✔ ALWAYS VALID NOW
-
+        guild_id = msg.guild.id
         csv_id = filename.rsplit(".", 1)[0]
 
         reader = csv.DictReader(io.StringIO(csv_text), delimiter=";")
@@ -116,6 +71,8 @@ class InventoryCSVImport(commands.Cog):
 
         async with self.bot.db.acquire() as conn:
             for idx, row in enumerate(rows, start=2):
+
+                # Skip empty rows
                 if all(not (v and v.strip()) for v in row.values()):
                     continue
 
@@ -181,7 +138,6 @@ class InventoryCSVImport(commands.Cog):
                 else:
                     image_link = None
 
-                # ✔ UPDATED — SELECT now filters by guild_id
                 existing = await conn.fetchrow(
                     """
                     SELECT *
