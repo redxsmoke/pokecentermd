@@ -339,7 +339,7 @@ class AdminCommands(commands.Cog):
                 elif action == "upload_csv":
                     csv_cog: InventoryCSVImport = inner_interaction.client.get_cog("InventoryCSVImport")
                     await csv_cog.start_csv_upload(inner_interaction)
-                    await inner_interaction.response.send_message("CSV upload mode started.", ephemeral=True)
+                    await inner_interaction.response.followup.send("CSV upload mode started.Please allow some time for your CSV file to be processed. You will receive a confirmation message once it has completed.", ephemeral=True)
                     return
 
                 elif action == "deactivate_single":

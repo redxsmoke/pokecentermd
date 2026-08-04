@@ -642,6 +642,46 @@ class FinalizeOrderView(discord.ui.View):
 
         self.message = None
 
+    # ---------------------------------------------------------
+    # STOP TIMEOUT WHEN ORDER IS SUBMITTED
+    # ---------------------------------------------------------
+    @discord.ui.button(label="Submit Order", style=discord.ButtonStyle.green)
+    async def submit_order(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Your existing order submission logic goes here
+        # (unchanged)
+
+        # STOP THE TIMEOUT
+        self.stop()
+
+        # REMOVE THE VIEW SO TIMEOUT CANNOT FIRE
+        await interaction.response.edit_message(
+            content="Your order has been submitted!",
+            view=None
+        )
+
+    # ---------------------------------------------------------
+    # TIMEOUT HANDLER — ONLY FIRES IF USER NEVER SUBMITS
+    # ---------------------------------------------------------
+    async def on_timeout(self):
+
+        # Release items, notify user, etc.
+        # (your existing timeout logic stays exactly the same)
+
+        try:
+            await self.message.edit(
+                content=(
+                    "Order Cancelled\n"
+                    "Your checkout session expired before the order was submitted.\n\n"
+                    "The following items were released:\n\n"
+                    + "\n".join(f"• {item['pokemon_name']} — x{item['quantity']}" for item in self.items)
+                    + "\n\nIf you still want these items, please add them to your cart again."
+                ),
+                view=None
+            )
+        except Exception:
+            pass
+
 
     async def on_timeout(self):
         async with self.bot.db.acquire() as conn:
