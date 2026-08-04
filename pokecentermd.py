@@ -1,5 +1,6 @@
 import os
 import discord
+import logging
 from discord.ext import commands
 from dotenv import load_dotenv
 
@@ -12,12 +13,18 @@ from db.connection import init_db, get_pool
 SHOP_OPEN = True
 SHOP_CLOSE_REASON = None
 
+# -------------------------
+#   LOGGING SETUP
+# -------------------------
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("bot")
+
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True
-intents.members = True   # REQUIRED for on_member_join
+intents.members = True
 
 
 class MyBot(commands.Bot):
@@ -32,6 +39,7 @@ class MyBot(commands.Bot):
             "Commands.Orders.myorderscommand",
             "Commands.Orders.myordersview",
             "Commands.Admin.admincommands",
+            "Commands.Admin.inventory_csv_import",
             "Commands.SellCards.sellcards",
             "Commands.BuyingGuide.buyingguide",
             "Commands.UpcomingShows.upcomingshows"
@@ -53,35 +61,89 @@ class MyBot(commands.Bot):
         print(f"Synced {len(synced)} commands globally.")
 
 
-
 bot = MyBot(command_prefix="!", intents=intents)
 
 
-@bot.event
-async def on_ready():
-    print(f"Logged in as {bot.user}")
-
-
 # ---------------------------------------------------------
-#   WELCOME MESSAGE (UPDATED)
+#   GLOBAL APP COMMAND ERROR LOGGER (SAFE)
 # ---------------------------------------------------------
-@bot.event
-async def on_member_join(member):
-    WELCOME_CHANNEL_ID = 1532117357147848825
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    logger.error(
+        f"[APP COMMAND ERROR] Command={interaction.command.name if interaction.command else 'None'} "
+        f"User={interaction.user.id} "
+        f"Error={error.__class__.__name__}: {error}",
+        exc_info=True
+    )
 
-    channel = member.guild.get_channel(WELCOME_CHANNEL_ID)
-    if channel:
-        await channel.send(
-            f"Welcome to the server {member.mention}!\n\n"
-            "There are a few commands you can use to buy or sell your cards to us:\n\n"
-            "• **/inventory** – browse the cards we have available for sale and add them to your cart\n"
-            "• **/cart** – submit and pay for your order\n"
-            "• **/sellyourcards** – send us cards you'd like to offload\n"
-            "• **/buyingguide** – view our current buying rates\n"
-            "• **/myorders** – view your past orders\n"
-            "• **/upcomingshows** – see what shows we are attending soon!\n\n"
-            "To get a refresher about what commands the bot offers, use **/help**!"
+    try:
+        await interaction.response.send_message(
+            "⚠️ An internal error occurred while processing this command.",
+            ephemeral=True
         )
+        return
+    except discord.InteractionResponded:
+        pass
+    except discord.NotFound:
+        pass
+
+    try:
+        await interaction.followup.send(
+        "⚠️ An internal error occurred while processing this command.",
+        ephemeral=True
+        )
+    except Exception:
+        logger.error("[ERROR HANDLER] Could not send error message (interaction invalid).")
+
+
+# ---------------------------------------------------------
+#   SAFE INTERACTION LOGGER (DOES NOT BREAK SLASH COMMANDS)
+# ---------------------------------------------------------
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    logger.debug(
+        f"[INTERACTION] type={interaction.type} id={interaction.id} data={interaction.data}"
+    )
+    # IMPORTANT: do NOT touch interaction.response here
+    # Let discord.py handle slash commands normally
+
+
+# ---------------------------------------------------------
+#   WELCOME MESSAGE (DB-DRIVEN WELCOME CHANNEL)
+# ---------------------------------------------------------
+@bot.event
+async def on_member_join(member: discord.Member):
+    print(f"[DEBUG] Member joined: {member} (ID: {member.id}) in guild {member.guild.name}")
+
+    # Fetch welcome channel from DB
+    async with bot.db.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT welcome_channel_id FROM guild_settings WHERE guild_id = $1",
+            member.guild.id
+        )
+
+    if not row or not row["welcome_channel_id"]:
+        print("[DEBUG] No welcome channel set for this guild.")
+        return
+
+    welcome_channel_id = row["welcome_channel_id"]
+    channel = member.guild.get_channel(welcome_channel_id)
+
+    if channel is None:
+        print(f"[DEBUG] Welcome channel ID {welcome_channel_id} not found in guild.")
+        return
+
+    await channel.send(
+        f"Welcome to the server {member.mention}!\n\n"
+        "There are a few commands you can use to buy or sell your cards to us:\n\n"
+        "• **/inventory** – browse the cards we have available for sale and add them to your cart\n"
+        "• **/cart** – submit and pay for your order\n"
+        "• **/sellyourcards** – send us cards you'd like to offload\n"
+        "• **/buyingguide** – view our current buying rates\n"
+        "• **/myorders** – view your past orders\n"
+        "• **/upcomingshows** – see what shows we are attending soon!\n\n"
+        "To get a refresher about what commands the bot offers, use **/help**!"
+    )
 
 
 # ---------------------------------------------------------
