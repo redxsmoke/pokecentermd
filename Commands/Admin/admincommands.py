@@ -55,9 +55,6 @@ class AdminCommands(commands.Cog):
         )
         update_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
-        # ---------------------------------------------------------
-        # ACTIVATE SINGLE (inactive cards)
-        # ---------------------------------------------------------
         activate_single_cmd = discord.app_commands.Command(
             name="activate_single",
             description="Reactivate a hidden inventory item.",
@@ -65,9 +62,6 @@ class AdminCommands(commands.Cog):
         )
         activate_single_cmd.autocomplete("card")(self.inactive_inventory_autocomplete)
 
-        # ---------------------------------------------------------
-        # DEACTIVATE SINGLE (active cards)
-        # ---------------------------------------------------------
         deactivate_single_cmd = discord.app_commands.Command(
             name="deactivate_single",
             description="Hide an inventory item so it no longer appears in update_single.",
@@ -75,9 +69,6 @@ class AdminCommands(commands.Cog):
         )
         deactivate_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
-        # ---------------------------------------------------------
-        # DELETE SINGLE (all cards)
-        # ---------------------------------------------------------
         delete_single_cmd = discord.app_commands.Command(
             name="delete_single",
             description="Permanently delete a card from inventory.",
@@ -376,13 +367,100 @@ class AdminCommands(commands.Cog):
             ephemeral=True
         )
 
+    # ---------------------------------------------------------
+    # /admin closeshop (RESTORED WITH EMBEDS)
+    # ---------------------------------------------------------
     async def closeshop(self, interaction: discord.Interaction):
-        shop_state.SHOP_OPEN = False
-        await interaction.response.send_message("Shop closed.", ephemeral=True)
 
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ Admin commands cannot be used in DMs.",
+                ephemeral=True
+            )
+            return
+
+        class CloseReasonSelect(discord.ui.Select):
+            def __init__(self):
+                options = [
+                    discord.SelectOption(label="At show", value="show"),
+                    discord.SelectOption(label="Maintenance", value="maintenance"),
+                ]
+                super().__init__(placeholder="Select a reason", options=options)
+
+            async def callback(self, inner_interaction: discord.Interaction):
+
+                if inner_interaction.guild is None:
+                    await inner_interaction.response.send_message(
+                        "❌ Admin commands cannot be used in DMs.",
+                        ephemeral=True
+                    )
+                    return
+
+                shop_state.SHOP_OPEN = False
+                shop_state.SHOP_CLOSE_REASON = self.values[0]
+
+                await inner_interaction.response.send_message(
+                    "Shop closed successfully.",
+                    ephemeral=True
+                )
+
+                if self.values[0] == "show":
+                    desc = (
+                        "📢 **The shop is now CLOSED because we are currently at a show.**\n"
+                        "Orders are disabled until the show ends."
+                    )
+                else:
+                    desc = (
+                        "📢 **The shop is now CLOSED for maintenance.**\n"
+                        "Orders will resume once improvements are complete."
+                    )
+
+                embed = discord.Embed(
+                    title="🚫 Shop Closed",
+                    description=desc,
+                    color=discord.Color.red()
+                )
+
+                await interaction.channel.send(embed=embed)
+
+        class CloseReasonView(discord.ui.View):
+            def __init__(self):
+                super().__init__()
+                self.add_item(CloseReasonSelect())
+
+        await interaction.response.send_message(
+            "Choose a reason for closing the shop:",
+            view=CloseReasonView(),
+            ephemeral=True
+        )
+
+    # ---------------------------------------------------------
+    # /admin openshop (RESTORED WITH EMBEDS)
+    # ---------------------------------------------------------
     async def openshop(self, interaction: discord.Interaction):
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "❌ Admin commands cannot be used in DMs.",
+                ephemeral=True
+            )
+            return
+
         shop_state.SHOP_OPEN = True
-        await interaction.response.send_message("Shop opened.", ephemeral=True)
+        shop_state.SHOP_CLOSE_REASON = None
+
+        await interaction.response.send_message(
+            "✅ The shop is now **open**.",
+            ephemeral=True
+        )
+
+        embed = discord.Embed(
+            title="🟢 Shop Open",
+            description="📢 **The shop is now OPEN!**\nYou may resume browsing and ordering.",
+            color=discord.Color.green()
+        )
+
+        await interaction.channel.send(embed=embed)
 
 
 async def setup(bot):
