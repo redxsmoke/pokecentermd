@@ -337,9 +337,22 @@ class AdminCommands(commands.Cog):
                     return
 
                 elif action == "upload_csv":
+
+                    await inner_interaction.response.send_message(
+                        embed=discord.Embed(
+                            title="📄 CSV Upload Started",
+                            description=(
+                                "Your CSV upload has begun.\n\n"
+                                "Please allow some time for processing — especially on Railway.\n"
+                                "You will receive a confirmation message once the import is complete."
+                            ),
+                            color=discord.Color.blue()
+                        ),
+                        ephemeral=True
+                    )
+
                     csv_cog: InventoryCSVImport = inner_interaction.client.get_cog("InventoryCSVImport")
                     await csv_cog.start_csv_upload(inner_interaction)
-                    await inner_interaction.followup.send("CSV upload mode started.Please allow some time for your CSV file to be processed. You will receive a confirmation message once it has completed.", ephemeral=True)
                     return
 
                 elif action == "deactivate_single":

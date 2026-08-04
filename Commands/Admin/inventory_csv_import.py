@@ -62,8 +62,9 @@ class InventoryCSVImport(commands.Cog):
             ),
             color=discord.Color.green()
         )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
 
         # Wait for CSV upload IN THIS CHANNEL
         def check(message: discord.Message):
