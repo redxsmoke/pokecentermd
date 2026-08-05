@@ -8,16 +8,13 @@ class SetWelcomeChannelView(ui.View):
         self.bot = bot
         self.guild_id = guild_id
 
-        # Dynamic label
-        if current_welcome_channel_id is None:
-            label = "Set This Channel as Welcome Channel"
-        else:
-            label = "Update Welcome Channel to This Channel"
-
-        self.button = ui.Button(
-            label=label,
-            style=discord.ButtonStyle.primary
+        label = (
+            "Set This Channel as Welcome Channel"
+            if current_welcome_channel_id is None
+            else "Update Welcome Channel to This Channel"
         )
+
+        self.button = ui.Button(label=label, style=discord.ButtonStyle.primary)
         self.button.callback = self.set_channel
         self.add_item(self.button)
 
@@ -46,11 +43,8 @@ class SetWelcomeChannelView(ui.View):
 
 
 async def set_welcome_channel(interaction: discord.Interaction):
-    """This function will be registered by admincommands.py"""
-
     guild_id = interaction.guild.id
 
-    # Fetch current welcome channel
     async with interaction.client.db.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT welcome_channel_id FROM guild_settings WHERE guild_id = $1",
@@ -78,5 +72,4 @@ async def set_welcome_channel(interaction: discord.Interaction):
     )
 
     view = SetWelcomeChannelView(interaction.client, guild_id, current_welcome_channel_id)
-
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

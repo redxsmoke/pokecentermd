@@ -8,17 +8,13 @@ class SetAdminChannelView(ui.View):
         self.bot = bot
         self.guild_id = guild_id
 
-        # Dynamic label
-        if current_admin_channel_id is None:
-            label = "Set This Channel as Admin Channel"
-        else:
-            label = "Update Admin Channel to This Channel"
-
-        # Create dynamic button
-        self.button = ui.Button(
-            label=label,
-            style=discord.ButtonStyle.primary
+        label = (
+            "Set This Channel as Admin Channel"
+            if current_admin_channel_id is None
+            else "Update Admin Channel to This Channel"
         )
+
+        self.button = ui.Button(label=label, style=discord.ButtonStyle.primary)
         self.button.callback = self.set_channel
         self.add_item(self.button)
 
@@ -46,12 +42,9 @@ class SetAdminChannelView(ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-async def bot_settings(interaction: discord.Interaction):
-    """This function will be registered by admincommands.py"""
-
+async def set_admin_channel(interaction: discord.Interaction):
     guild_id = interaction.guild.id
 
-    # Fetch current admin channel
     async with interaction.client.db.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT admin_channel_id FROM guild_settings WHERE guild_id = $1",
@@ -73,11 +66,10 @@ async def bot_settings(interaction: discord.Interaction):
             "The admin channel **must be restricted** to:\n"
             "• Server administrators\n"
             "• The bot\n\n"
-            "This prevents regular users from interfering with inventory operations. If this is not the channel you would like to be the admin channel, please navigate to the correct channel and run this command again"
+            "If this is not the channel you would like to be the admin channel, navigate to the correct channel and run this command again."
         ),
         color=discord.Color.blurple()
     )
 
     view = SetAdminChannelView(interaction.client, guild_id, current_admin_channel_id)
-
     await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

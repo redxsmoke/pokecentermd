@@ -67,9 +67,6 @@ class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    #
-    # MAIN INVENTORY COMMAND
-    #
     @app_commands.command(
         name="inventory",
         description="Browse the inventory. Apply filters after results appear."
@@ -91,7 +88,6 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Failed to start inventory.", ephemeral=True)
             return
 
-        # SHOP CLOSED CHECK
         if not shop_state.SHOP_OPEN:
             if shop_state.SHOP_CLOSE_REASON == "show":
                 desc = (
@@ -131,7 +127,6 @@ class Inventory(commands.Cog):
 
         pages, inventory_ids = self.build_gallery_pages(rows)
 
-        # Load filter options
         conditions = await self.get_distinct_values("condition", interaction.guild.id)
         series_list = await self.get_distinct_values("series", interaction.guild.id)
         variants = await self.get_distinct_values("variant", interaction.guild.id)
@@ -167,9 +162,6 @@ class Inventory(commands.Cog):
             ephemeral=True
         )
 
-    #
-    # AUTOCOMPLETE FOR POKÉMON NAME
-    #
     @inventory.autocomplete("pokemon_name")
     async def pokemon_autocomplete(self, interaction: discord.Interaction, current: str):
         async with self.bot.db.acquire() as conn:
@@ -194,9 +186,6 @@ class Inventory(commands.Cog):
 
         return [app_commands.Choice(name=n, value=n) for n in names]
 
-    #
-    # DATABASE QUERY
-    #
     async def run_query(self, pokemon_name=None, set_name=None, filters=None, guild_id=None):
         where_clauses = ["quantity_available >= 1"]
         params = []
@@ -253,9 +242,6 @@ class Inventory(commands.Cog):
         async with self.bot.db.acquire() as conn:
             return await conn.fetch(query, *params)
 
-    #
-    # DISTINCT VALUES
-    #
     async def get_distinct_values(self, column_name: str, guild_id: int):
         query = f"""
             SELECT DISTINCT {column_name}
@@ -269,9 +255,6 @@ class Inventory(commands.Cog):
             rows = await conn.fetch(query, guild_id)
         return [r[column_name] for r in rows]
 
-    #
-    # GALLERY PAGE BUILDER
-    #
     def build_gallery_pages(self, rows):
         pages = []
         inventory_ids = []
@@ -312,9 +295,6 @@ class Inventory(commands.Cog):
 
         return pages, inventory_ids
 
-    #
-    # INVENTORY VIEW
-    #
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, inventory_ids, filter_options):
             super().__init__(timeout=180)
@@ -542,33 +522,22 @@ class Inventory(commands.Cog):
                 style=discord.ButtonStyle.success
             )
 
-            async def checkout_callback(inner_interaction: discord.Interaction):
-                cart_view = CheckoutStartView(self.bot, inner_interaction.user.id)
-                embed_checkout = discord.Embed(
+            async def checkout_callback(interaction: discord.Interaction):
+                checkout_view = CheckoutStartView(self.bot, interaction.user.id)
+                ok = await checkout_view.async_init(interaction)
+                if ok is False:
+                    return
+
+                embed2 = discord.Embed(
                     title="Checkout",
                     description="Select shipping and payment method:",
                     color=discord.Color.blue()
                 )
-                await inner_interaction.response.send_message(
-                    embed=embed_checkout,
-                    view=cart_view,
-                    ephemeral=True
-                )
+
+                await interaction.response.edit_message(embed=embed2, view=checkout_view)
 
             checkout_button.callback = checkout_callback
             view.add_item(checkout_button)
-
-            view_cart_button = discord.ui.Button(
-                label="View Cart",
-                style=discord.ButtonStyle.primary
-            )
-
-            async def view_cart_callback(inner_interaction: discord.Interaction):
-                cart_cog = inner_interaction.client.get_cog("Cart")
-                await cart_cog.open_cart(inner_interaction)
-
-            view_cart_button.callback = view_cart_callback
-            view.add_item(view_cart_button)
 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
