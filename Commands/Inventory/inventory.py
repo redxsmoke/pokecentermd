@@ -10,7 +10,6 @@ from Commands.Inventory.inventory_filter import FilterTypeView
 GALLERY_PAGE_SIZE = 6
 log = logging.getLogger("inventory")
 
-
 class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
     def __init__(self, parent_view):
         super().__init__()
@@ -56,20 +55,21 @@ class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
             for path, filename in files
         ]
 
+        # IMPORTANT FIX: rebuild dropdowns so add-to-cart updates
+        self.parent_view.build_dropdowns()
+
         await interaction.response.edit_message(
             embeds=embeds,
             attachments=discord_files,
             view=self.parent_view
         )
-
-
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @app_commands.command(
-        name="inventory",
-        description="Browse the inventory. Apply filters after results appear."
+        name="shop",
+        description="Browse the Shop! Apply filters after results appear."
     )
     @app_commands.describe(
         pokemon_name="Search by Pokémon name",
@@ -161,30 +161,6 @@ class Inventory(commands.Cog):
             view=view,
             ephemeral=True
         )
-
-    @inventory.autocomplete("pokemon_name")
-    async def pokemon_autocomplete(self, interaction: discord.Interaction, current: str):
-        async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT DISTINCT pokemon_name
-                FROM inventory
-                WHERE quantity_available >= 1
-                  AND guild_id = $1
-                ORDER BY pokemon_name ASC
-                LIMIT 500;
-                """,
-                interaction.guild.id
-            )
-
-        names = [r["pokemon_name"] for r in rows]
-
-        if current:
-            names = [n for n in names if current.lower() in n.lower()]
-
-        names = names[:25]
-
-        return [app_commands.Choice(name=n, value=n) for n in names]
 
     async def run_query(self, pokemon_name=None, set_name=None, filters=None, guild_id=None):
         where_clauses = ["quantity_available >= 1"]
@@ -360,10 +336,8 @@ class Inventory(commands.Cog):
 
             self.filters_button.row = 3
             self.clear_filters.row = 3
-            self.search_pokemon_button.row = 3
             self.add_item(self.filters_button)
             self.add_item(self.clear_filters)
-            self.add_item(self.search_pokemon_button)
 
         async def update(self, interaction: discord.Interaction):
             embeds, files = self.pages[self.page]
@@ -393,6 +367,7 @@ class Inventory(commands.Cog):
         @discord.ui.button(label="Filters", style=discord.ButtonStyle.secondary, row=3)
         async def filters_button(self, interaction: discord.Interaction, button: discord.ui.Button):
             options = [
+                discord.SelectOption(label="Pokémon Name", value="pokemon_name"),
                 discord.SelectOption(label="Condition", value="condition"),
                 discord.SelectOption(label="Series", value="series"),
                 discord.SelectOption(label="Variant", value="variant"),
@@ -406,17 +381,38 @@ class Inventory(commands.Cog):
                 options=options
             )
 
-            view = FilterTypeView(
-                bot=self.bot,
-                base_pokemon_name=self.base_pokemon_name,
-                base_set_name=self.base_set_name,
-                filters=self.filters,
-                pages=self.pages,
-                inventory_ids=self.inventory_ids,
-                current_page=self.page,
-                filter_options=self.filter_options,
-                filter_type_select=filter_type_select
-            )
+            async def filter_type_callback(interaction: discord.Interaction):
+                selected = filter_type_select.values[0]
+
+                if selected == "pokemon_name":
+                    await interaction.response.send_modal(PokemonSearchModal(self))
+                    return
+
+                view = FilterTypeView(
+                    bot=self.bot,
+                    base_pokemon_name=self.base_pokemon_name,
+                    base_set_name=self.base_set_name,
+                    filters=self.filters,
+                    pages=self.pages,
+                    inventory_ids=self.inventory_ids,
+                    current_page=self.page,
+                    filter_options=self.filter_options,
+                    filter_type_select=filter_type_select
+                )
+
+                embeds, files = self.pages[self.page]
+                discord_files = [
+                    discord.File(path, filename=filename)
+                    for path, filename in files
+                ]
+
+                await interaction.response.edit_message(
+                    embeds=embeds,
+                    attachments=discord_files,
+                    view=view
+                )
+
+            filter_type_select.callback = filter_type_callback
 
             embeds, files = self.pages[self.page]
             discord_files = [
@@ -424,6 +420,8 @@ class Inventory(commands.Cog):
                 for path, filename in files
             ]
 
+            view = discord.ui.View()
+            view.add_item(filter_type_select)
             await interaction.response.edit_message(
                 embeds=embeds,
                 attachments=discord_files,
@@ -453,11 +451,8 @@ class Inventory(commands.Cog):
 
             self.pages, self.inventory_ids = inventory_cog.build_gallery_pages(rows)
             self.page = 0
+            self.build_dropdowns()
             await self.update(interaction)
-
-        @discord.ui.button(label="🔍 Search Pokémon", style=discord.ButtonStyle.secondary, row=3)
-        async def search_pokemon_button(self, interaction: discord.Interaction, button: discord.ui.Button):
-            await interaction.response.send_modal(PokemonSearchModal(self))
 
         async def add_to_cart(self, interaction: discord.Interaction, inventory_id: int):
             await interaction.response.defer(ephemeral=True)
@@ -541,7 +536,39 @@ class Inventory(commands.Cog):
 
             await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
+        async def view_more_info(self, interaction: discord.Interaction, inventory_id: int):
+            async with self.bot.db.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT series, set_name, variant, rarity
+                    FROM inventory
+                    WHERE inventory_id = $1;
+                    """,
+                    inventory_id
+                )
+
+            if not row:
+                await interaction.response.send_message("Item no longer exists.", ephemeral=True)
+                return
+
+            embed = discord.Embed(
+                title="More Information",
+                color=discord.Color.blue()
+            )
+
+            embed.description = (
+                f"**Expansion:** {row['series']}\n"
+                f"**Set:** {row['set_name']}\n"
+                f"**Variant:** {row['variant'] or '—'}\n"
+                f"**Rarity:** {row['rarity'] or '—'}\n"
+            )
+
+            await interaction.response.send_message(embed=embed, ephemeral=True)
 
 async def setup(bot):
     print("INVENTORY COG LOADED")
     await bot.add_cog(Inventory(bot))
+
+
+
+

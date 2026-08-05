@@ -156,6 +156,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         file = discord.File(BytesIO(file_bytes), filename=f"batch_upload_{i+1}.jpg")
 
         sent_msg = await admin_channel.send(file=file)
+        await asyncio.sleep(0.35)  # prevents Discord retry
         url = sent_msg.attachments[0].url
 
         if "?" in url:

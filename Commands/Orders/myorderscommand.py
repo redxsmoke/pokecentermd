@@ -1,13 +1,12 @@
+# Commands/Orders/myorderscommand.py
+
 import discord
 from discord.ext import commands
 import datetime
 
-# ============================
-# REMOVED HARDCODED ADMIN_ID
-# (Now loaded dynamically from guild_settings)
-# ============================
+ADMIN_ID = 337773020770729985
 
-from .myordersview import MyOrdersView  # buyer-facing view with buttons
+from .myordersview import MyOrdersView  # use the buyer-facing view with buttons
 
 
 class MyOrdersSlash(commands.Cog):
@@ -21,22 +20,7 @@ class MyOrdersSlash(commands.Cog):
     async def myorders(self, interaction: discord.Interaction):
         user_id = interaction.user.id
 
-        # ============================
-        # ADDED — load dynamic admin_id
-        # ============================
-        async with self.bot.db.acquire() as conn:
-            settings = await conn.fetchrow(
-                """
-                SELECT admin_id
-                FROM guild_settings
-                WHERE guild_id = $1;
-                """,
-                interaction.guild_id
-            )
-
-        admin_id = settings["admin_id"]
-
-        # Only show orders from the past 30 days (Option A)
+        # Only show orders from the past 30 days
         cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=30)
 
         async with self.bot.db.acquire() as conn:
@@ -93,16 +77,12 @@ class MyOrdersSlash(commands.Cog):
             mode
         )
 
-        # ============================
-        # UPDATED — pass dynamic admin_id
-        # ============================
         view = MyOrdersView(
             self.bot,
             user_id,
             active_orders,
             archived_orders,
-            mode,
-            admin_id
+            mode
         )
 
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)

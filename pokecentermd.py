@@ -136,7 +136,7 @@ async def on_member_join(member: discord.Member):
     await channel.send(
         f"Welcome to the server {member.mention}!\n\n"
         "There are a few commands you can use to buy or sell your cards to us:\n\n"
-        "• **/inventory** – browse the cards we have available for sale and add them to your cart\n"
+        "• **/shop** – browse the cards we have available for sale and add them to your cart\n"
         "• **/cart** – submit and pay for your order\n"
         "• **/sellyourcards** – send us cards you'd like to offload\n"
         "• **/buyingguide** – view our current buying rates\n"
@@ -157,7 +157,7 @@ async def help_command(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
 
-    embed.add_field(name="🛒 /inventory", value="Browse cards and add to cart.", inline=False)
+    embed.add_field(name="🛒 /shop", value="Browse cards and add to cart.", inline=False)
     embed.add_field(name="💳 /cart", value="Submit and pay for your order.", inline=False)
     embed.add_field(name="📤 /sellyourcards", value="Send us cards you'd like to offload.", inline=False)
     embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
