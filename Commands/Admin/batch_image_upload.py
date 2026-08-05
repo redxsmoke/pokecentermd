@@ -121,6 +121,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         return
 
     image_urls = []
+    uploaded_messages = []   # <--- TRACK ADMIN-CHANNEL MESSAGES
 
     for i in range(6):
         prompt = discord.Embed(
@@ -156,6 +157,8 @@ async def batch_image_upload(interaction: discord.Interaction):
         file = discord.File(BytesIO(file_bytes), filename=f"batch_upload_{i+1}.jpg")
 
         sent_msg = await admin_channel.send(file=file)
+        uploaded_messages.append(sent_msg)  # <--- STORE MESSAGE FOR LATER DELETION
+
         await asyncio.sleep(0.35)  # prevents Discord retry
         url = sent_msg.attachments[0].url
 
@@ -198,7 +201,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
         confirm_embeds.append(embed)
 
-    view = BatchImageConfirmView(interaction.client, inventory_ids, image_urls)
+    view = BatchImageConfirmView(interaction.client, inventory_ids, image_urls, uploaded_messages)
 
     await interaction.followup.send(
         content="Review the images below. Confirm to save or Cancel to discard.",
@@ -212,14 +215,17 @@ async def batch_image_upload(interaction: discord.Interaction):
 # CONFIRMATION VIEW
 # ---------------------------------------------------------
 class BatchImageConfirmView(discord.ui.View):
-    def __init__(self, bot, inventory_ids, image_urls):
+    def __init__(self, bot, inventory_ids, image_urls, uploaded_messages):
         super().__init__(timeout=300)
         self.bot = bot
         self.inventory_ids = inventory_ids
         self.image_urls = image_urls
+        self.uploaded_messages = uploaded_messages  # <--- STORE MESSAGES
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Save images to DB
         async with self.bot.db.acquire() as conn:
             for inv_id, url in zip(self.inventory_ids, self.image_urls):
                 await conn.execute(
@@ -233,6 +239,13 @@ class BatchImageConfirmView(discord.ui.View):
                     url
                 )
 
+        # Delete admin-channel messages
+        for msg in self.uploaded_messages:
+            try:
+                await msg.delete()
+            except:
+                pass
+
         await interaction.response.edit_message(
             content="✅ Images saved successfully.",
             view=None,
@@ -241,6 +254,13 @@ class BatchImageConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Delete admin-channel messages
+        for msg in self.uploaded_messages:
+            try:
+                await msg.delete()
+            except:
+                pass
 
         await interaction.response.edit_message(
             content="❌ Batch image upload cancelled. No changes were saved.",
