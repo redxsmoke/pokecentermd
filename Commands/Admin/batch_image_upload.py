@@ -224,8 +224,15 @@ class BatchImageConfirmView(discord.ui.View):
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
 
+        # DELETE ONLY THE IMAGES FROM THIS SESSION
+        for msg in self.uploaded_messages:
+            try:
+                await msg.delete()
+            except Exception:
+                pass
+
         await interaction.response.edit_message(
-            content="❌ Batch image upload cancelled. No changes were saved.",
+            content="❌ Batch image upload cancelled. All uploaded images for this session were deleted.",
             view=None,
             embeds=[]
         )

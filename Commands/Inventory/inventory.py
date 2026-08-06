@@ -277,6 +277,7 @@ class Inventory(commands.Cog):
                 "__**Card Details**__\n\n"
                 f"**Price:** ${row['price']}\n"
                 f"**Condition:** {row['condition'] or 'Near Mint'}\n"
+                f"**Quantity Available:** {row['quantity_available']}\n"
                 f"**Graded:** {graded_text}\n"
             )
             embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
