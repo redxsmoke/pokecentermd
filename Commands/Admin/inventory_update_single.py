@@ -761,6 +761,19 @@ async def start_update_image_flow(interaction: discord.Interaction, card_row):
     if "?" in url:
         url = url.split("?")[0]
 
+    def safe_image(u: str) -> str:
+        if not u:
+            return None
+        u = u.strip()
+        valid_ext = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+        if not any(u.lower().endswith(ext) for ext in valid_ext):
+            return None
+        if not (u.startswith("http://") or u.startswith("https://")):
+            return None
+        return u
+
+    final_url = safe_image(url)
+
     async with interaction.client.db.acquire() as conn:
         await conn.execute(
             """
@@ -768,12 +781,12 @@ async def start_update_image_flow(interaction: discord.Interaction, card_row):
             SET image_link = $1
             WHERE inventory_id = $2 AND guild_id = $3
             """,
-            url,
+            final_url,
             card_row["inventory_id"],
             interaction.guild.id
         )
 
-    card_row["image_link"] = url
+    card_row["image_link"] = final_url
 
     await send_update_success(interaction, card_row, "Image updated successfully.")
 

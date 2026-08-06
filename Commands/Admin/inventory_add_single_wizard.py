@@ -348,7 +348,11 @@ class PriceModal(ui.Modal, title="Enter Price"):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            self.wizard.state["price"] = float(self.price.value.strip())
+            
+            raw = self.price.value.strip()
+            raw = raw.replace("$", "").replace(",", "")
+            self.wizard.state["price"] = float(raw)
+
         except ValueError:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -371,6 +375,17 @@ class ImageDecisionView(ui.View):
         self.bot = bot
         self.state = state
         self.user = user
+
+    def safe_image(self, url: str) -> str:
+        if not url:
+            return None
+        url = url.strip()
+        valid_ext = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+        if not any(url.lower().endswith(ext) for ext in valid_ext):
+            return None
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return None
+        return url
 
     @ui.button(label="Upload Image", style=discord.ButtonStyle.primary)
     async def upload_image(self, interaction: discord.Interaction, button: ui.Button):
@@ -422,7 +437,7 @@ class ImageDecisionView(ui.View):
         if "?" in url:
             url = url.split("?")[0]
 
-        self.state["image_link"] = url
+        self.state["image_link"] = self.safe_image(url)
 
         await insert_card_into_db(self.state, self.bot, interaction.guild.id)
 
@@ -436,7 +451,6 @@ class ImageDecisionView(ui.View):
 
     @ui.button(label="Don't Upload Image", style=discord.ButtonStyle.secondary)
     async def skip_image(self, interaction: discord.Interaction, button: ui.Button):
-
         await insert_card_into_db(self.state, self.bot, interaction.guild.id)
 
         embed = discord.Embed(

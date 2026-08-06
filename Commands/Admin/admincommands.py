@@ -285,19 +285,13 @@ class AdminCommands(commands.Cog):
                                 ephemeral=True
                             )
 
-                        @discord.ui.button(label="Cancel", style=discord.ButtonStyle.secondary)
+                        @discord.ui.button(label="Cancel", style=discord.Button.ButtonStyle.secondary)
                         async def cancel(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
                             await btn_interaction.response.send_message(
                                 "Delete cancelled.",
                                 ephemeral=True
                             )
 
-                    await inner_interaction.response.send_message(
-                        warning,
-                        view=DeleteWarningView(),
-                        ephemeral=True
-                    )
-                    return
                     await inner_interaction.response.send_message(
                         warning,
                         view=DeleteWarningView(),
@@ -334,7 +328,7 @@ class AdminCommands(commands.Cog):
 
                 elif action == "add_single":
                     await start_add_single_wizard(inner_interaction, inner_interaction.client)
-                    await inner_interaction.followup.send("Add Single wizard started.", ephemeral=True)
+                    await inner_interaction.followup.send("Add Single wizard started. Please navigate to the ADMIN channel to finish adding the new single.", ephemeral=True)
                     return
 
                 elif action == "upload_csv":
@@ -414,6 +408,8 @@ class AdminCommands(commands.Cog):
             )
             return
 
+        guild_id = interaction.guild.id
+
         class CloseReasonSelect(discord.ui.Select):
             def __init__(self):
                 options = [
@@ -430,6 +426,17 @@ class AdminCommands(commands.Cog):
                         ephemeral=True
                     )
                     return
+
+                # DB UPDATE — CLOSE SHOP
+                async with inner_interaction.client.db.acquire() as conn:
+                    await conn.execute(
+                        """
+                        UPDATE guild_settings
+                        SET shop_open = FALSE
+                        WHERE guild_id = $1
+                        """,
+                        guild_id
+                    )
 
                 shop_state.SHOP_OPEN = False
                 shop_state.SHOP_CLOSE_REASON = self.values[0]
@@ -481,6 +488,20 @@ class AdminCommands(commands.Cog):
             )
             return
 
+        guild_id = interaction.guild.id
+
+        # DB UPDATE — OPEN SHOP
+        async with self.bot.db.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE guild_settings
+                SET shop_open = TRUE
+                WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+        # MEMORY UPDATE
         shop_state.SHOP_OPEN = True
         shop_state.SHOP_CLOSE_REASON = None
 
@@ -500,4 +521,3 @@ class AdminCommands(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))
-

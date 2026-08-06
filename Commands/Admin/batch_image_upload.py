@@ -2,9 +2,6 @@ import discord
 import asyncio
 from io import BytesIO
 
-# ---------------------------------------------------------
-# GET ADMIN CHANNEL (correct guild_settings query)
-# ---------------------------------------------------------
 async def get_admin_channel(bot, guild_id: int):
     async with bot.db.acquire() as conn:
         row = await conn.fetchrow(
@@ -23,12 +20,8 @@ async def get_admin_channel(bot, guild_id: int):
     return bot.get_channel(channel_id)
 
 
-# ---------------------------------------------------------
-# /admin batch_image_upload  (FUNCTION-BASED CALLBACK)
-# ---------------------------------------------------------
 async def batch_image_upload(interaction: discord.Interaction):
 
-    # Prevent DM/thread usage
     if interaction.guild is None:
         await interaction.response.send_message(
             "❌ Admin commands cannot be used in DMs.",
@@ -38,9 +31,6 @@ async def batch_image_upload(interaction: discord.Interaction):
 
     await interaction.response.defer(ephemeral=True)
 
-    # ---------------------------------------------------------
-    # 1. Query cards missing images
-    # ---------------------------------------------------------
     async with interaction.client.db.acquire() as conn:
         rows = await conn.fetch(
             """
@@ -70,9 +60,6 @@ async def batch_image_upload(interaction: discord.Interaction):
     batch_rows = rows[:6]
     inventory_ids = [r["inventory_id"] for r in batch_rows]
 
-    # ---------------------------------------------------------
-    # 2. Show the 6 cards
-    # ---------------------------------------------------------
     embeds = []
     for row in batch_rows:
         card_number = row["card_number"] or "—"
@@ -109,9 +96,6 @@ async def batch_image_upload(interaction: discord.Interaction):
         ephemeral=True
     )
 
-    # ---------------------------------------------------------
-    # 3. Collect 6 images one-by-one
-    # ---------------------------------------------------------
     admin_channel = await get_admin_channel(interaction.client, interaction.guild.id)
     if admin_channel is None:
         await interaction.followup.send(
@@ -121,7 +105,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         return
 
     image_urls = []
-    uploaded_messages = []   # <--- TRACK ADMIN-CHANNEL MESSAGES
+    uploaded_messages = []
 
     for i in range(6):
         prompt = discord.Embed(
@@ -157,9 +141,9 @@ async def batch_image_upload(interaction: discord.Interaction):
         file = discord.File(BytesIO(file_bytes), filename=f"batch_upload_{i+1}.jpg")
 
         sent_msg = await admin_channel.send(file=file)
-        uploaded_messages.append(sent_msg)  # <--- STORE MESSAGE FOR LATER DELETION
+        uploaded_messages.append(sent_msg)
 
-        await asyncio.sleep(0.35)  # prevents Discord retry
+        await asyncio.sleep(0.35)
         url = sent_msg.attachments[0].url
 
         if "?" in url:
@@ -167,7 +151,6 @@ async def batch_image_upload(interaction: discord.Interaction):
 
         image_urls.append(url)
 
-        # Delete user message to keep channel clean
         try:
             await msg.delete()
         except:
@@ -180,9 +163,6 @@ async def batch_image_upload(interaction: discord.Interaction):
         )
         await interaction.followup.send(embed=progress, ephemeral=True)
 
-    # ---------------------------------------------------------
-    # 4. Build confirmation embeds
-    # ---------------------------------------------------------
     confirm_embeds = []
     for row, url in zip(batch_rows, image_urls):
         card_number = row["card_number"] or "—"
@@ -211,21 +191,17 @@ async def batch_image_upload(interaction: discord.Interaction):
     )
 
 
-# ---------------------------------------------------------
-# CONFIRMATION VIEW
-# ---------------------------------------------------------
 class BatchImageConfirmView(discord.ui.View):
     def __init__(self, bot, inventory_ids, image_urls, uploaded_messages):
         super().__init__(timeout=300)
         self.bot = bot
         self.inventory_ids = inventory_ids
         self.image_urls = image_urls
-        self.uploaded_messages = uploaded_messages  # <--- STORE MESSAGES
+        self.uploaded_messages = uploaded_messages
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        # Save images to DB
         async with self.bot.db.acquire() as conn:
             for inv_id, url in zip(self.inventory_ids, self.image_urls):
                 await conn.execute(
@@ -239,13 +215,6 @@ class BatchImageConfirmView(discord.ui.View):
                     url
                 )
 
-        # Delete admin-channel messages
-        for msg in self.uploaded_messages:
-            try:
-                await msg.delete()
-            except:
-                pass
-
         await interaction.response.edit_message(
             content="✅ Images saved successfully.",
             view=None,
@@ -254,13 +223,6 @@ class BatchImageConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-
-        # Delete admin-channel messages
-        for msg in self.uploaded_messages:
-            try:
-                await msg.delete()
-            except:
-                pass
 
         await interaction.response.edit_message(
             content="❌ Batch image upload cancelled. No changes were saved.",

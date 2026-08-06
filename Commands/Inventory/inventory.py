@@ -63,9 +63,21 @@ class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
             attachments=discord_files,
             view=self.parent_view
         )
+
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    def safe_image(self, url: str) -> str:
+        if not url:
+            return None
+        url = url.strip()
+        valid_ext = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+        if not any(url.lower().endswith(ext) for ext in valid_ext):
+            return None
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return None
+        return url
 
     @app_commands.command(
         name="shop",
@@ -88,7 +100,15 @@ class Inventory(commands.Cog):
             await interaction.followup.send("❌ Failed to start inventory.", ephemeral=True)
             return
 
-        if not shop_state.SHOP_OPEN:
+        async with self.bot.db.acquire() as conn:
+            settings = await conn.fetchrow(
+                "SELECT shop_open FROM guild_settings WHERE guild_id = $1",
+                interaction.guild.id
+            )
+
+        shop_is_open = True if settings and settings["shop_open"] else False
+
+        if not shop_is_open:
             if shop_state.SHOP_CLOSE_REASON == "show":
                 desc = (
                     "We are currently **at a show**, and the shop is temporarily closed.\n\n"
@@ -246,8 +266,10 @@ class Inventory(commands.Cog):
             title = f"{row['pokemon_name']} #{card_number} — {set_display}"
 
             embed = discord.Embed(title=title, color=discord.Color.gold())
-            if row["image_link"]:
-                embed.set_thumbnail(url=row["image_link"])
+
+            safe_url = self.safe_image(row["image_link"])
+            if safe_url:
+                embed.set_thumbnail(url=safe_url)
 
             graded_text = "Yes" if row["graded"] else "No"
 
@@ -270,6 +292,7 @@ class Inventory(commands.Cog):
             pages.append((current_embeds, current_files))
 
         return pages, inventory_ids
+
 
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, inventory_ids, filter_options):
@@ -568,7 +591,3 @@ class Inventory(commands.Cog):
 async def setup(bot):
     print("INVENTORY COG LOADED")
     await bot.add_cog(Inventory(bot))
-
-
-
-
