@@ -8,6 +8,9 @@ from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 from Commands.BotSettings.admin_channel import set_admin_channel
 from Commands.BotSettings.welcome_channel import set_welcome_channel
 from Commands.BotSettings.payment_settings import set_payment_info
+from Commands.Admin.update_single_wizard import start_update_single_wizard
+
+
 
 # ✅ NEW — import your batch upload function
 from Commands.Admin.batch_image_upload import batch_image_upload
