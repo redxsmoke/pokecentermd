@@ -13,7 +13,7 @@ class WizardStep:
     CONFIRM = 7
 
 
-class AddSingleWizardView(ui.View):
+class UpdateSingleWizardView(ui.View):
     def __init__(self, bot, user):
         super().__init__(timeout=1200)
         self.bot = bot
@@ -206,7 +206,7 @@ class AddSingleWizardView(ui.View):
 
 
 class ConditionSelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         options = [
             discord.SelectOption(label="Near Mint", value="Near Mint"),
             discord.SelectOption(label="Lightly Played", value="Lightly Played"),
@@ -348,7 +348,11 @@ class PriceModal(ui.Modal, title="Enter Price"):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            self.wizard.state["price"] = float(self.price.value.strip())
+            
+            raw = self.price.value.strip()
+            raw = raw.replace("$", "").replace(",", "")
+            self.wizard.state["price"] = float(raw)
+
         except ValueError:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -371,6 +375,17 @@ class ImageDecisionView(ui.View):
         self.bot = bot
         self.state = state
         self.user = user
+
+    def safe_image(self, url: str) -> str:
+        if not url:
+            return None
+        url = url.strip()
+        valid_ext = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+        if not any(url.lower().endswith(ext) for ext in valid_ext):
+            return None
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return None
+        return url
 
     @ui.button(label="Upload Image", style=discord.ButtonStyle.primary)
     async def upload_image(self, interaction: discord.Interaction, button: ui.Button):
@@ -422,9 +437,15 @@ class ImageDecisionView(ui.View):
         if "?" in url:
             url = url.split("?")[0]
 
-        self.state["image_link"] = url
+        self.state["image_link"] = self.safe_image(url)
 
-        await insert_card_into_db(self.state, self.bot, interaction.guild.id)
+        await update_card_in_db(
+            self.state,
+            self.bot,
+            interaction.guild.id,
+            self.state["inventory_id"]
+        )
+
 
         done = discord.Embed(
             title="Card Added",
@@ -437,7 +458,13 @@ class ImageDecisionView(ui.View):
     @ui.button(label="Don't Upload Image", style=discord.ButtonStyle.secondary)
     async def skip_image(self, interaction: discord.Interaction, button: ui.Button):
 
-        await insert_card_into_db(self.state, self.bot, interaction.guild.id)
+        await update_card_in_db(
+            self.state,
+            self.bot,
+            interaction.guild.id,
+            self.state["inventory_id"]
+        )
+
 
         embed = discord.Embed(
             title="Card Added",
@@ -448,23 +475,29 @@ class ImageDecisionView(ui.View):
         self.stop()
 
 
-async def insert_card_into_db(state, bot, guild_id):
+async def update_card_in_db(state, bot, guild_id, inventory_id):
     async with bot.db.acquire() as conn:
-        # Insert the new card
+
+        # --- UPDATE THE CARD ---
         await conn.execute(
             """
-            INSERT INTO inventory (
-                csv_id, pokemon_name, series, set_name, card_number,
-                variant, rarity, price, graded, grading_company, grade,
-                quantity_available, image_link, condition,
-                reserved, reserved_until, date_added, guild_id
-            )
-            VALUES (
-                'manual_add', $1, $2, $3, $4,
-                $5, $6, $7, $8, $9, $10,
-                $11, $12, $13,
-                0, NULL, CURRENT_DATE, $14
-            )
+            UPDATE inventory
+            SET
+                pokemon_name = $1,
+                series = $2,
+                set_name = $3,
+                card_number = $4,
+                variant = $5,
+                rarity = $6,
+                price = $7,
+                graded = $8,
+                grading_company = $9,
+                grade = $10,
+                quantity_available = $11,
+                image_link = $12,
+                condition = $13,
+                guild_id = $14
+            WHERE inventory_id = $15
             """,
             state["pokemon_name"],
             state["series"],
@@ -479,13 +512,11 @@ async def insert_card_into_db(state, bot, guild_id):
             state["quantity_available"],
             state["image_link"],
             state["condition"],
-            guild_id
+            guild_id,
+            inventory_id
         )
 
-        #
-        # ⭐ WISHLIST MATCHING TRIGGER
-        #
-        # Load all wishlist filters for this guild
+        # --- FETCH WISHLIST FILTERS ---
         filters = await conn.fetch(
             """
             SELECT *
@@ -495,7 +526,7 @@ async def insert_card_into_db(state, bot, guild_id):
             guild_id
         )
 
-        # Compare the new card against each wishlist filter
+        # --- CHECK FOR MATCHES ---
         for f in filters:
             match = True
 
@@ -526,19 +557,20 @@ async def insert_card_into_db(state, bot, guild_id):
             if not match:
                 continue
 
-        
+            # --- SEND DM TO USER ---
             try:
                 user = await bot.fetch_user(f["user_id"])
                 await user.send(
                     embed=discord.Embed(
-                        title="Wishlist Match Found!",
+                        title="Wishlist Price Drop!",
                         description=(
-                            f"A new card matching your wishlist was added:\n\n"
+                            f"A card on your wishlist dropped in price:\n\n"
                             f"**{state['pokemon_name']}**\n"
                             f"Series: {state['series']}\n"
                             f"Set: {state['set_name']}\n"
                             f"Condition: {state['condition']}\n"
-                            f"Price: ${state['price']}"
+                            f"Old Price: ${old_price:.2f}\n"
+                            f"New Price: ${new_price:.2f}"
                         ),
                         color=discord.Color.green()
                     )
@@ -560,8 +592,8 @@ async def get_admin_channel(bot, guild_id):
     return None
 
 
-async def start_add_single_wizard(interaction: discord.Interaction, bot: commands.Bot):
-    admin_channel = await get_admin_channel(bot, interaction.guild.id)
+async def start_update_single_wizard(interaction: discord.Interaction, card_row: dict):
+    admin_channel = await get_admin_channel(interaction.client, interaction.guild.id)
 
     if admin_channel is None:
         await interaction.response.send_message(
@@ -570,18 +602,20 @@ async def start_add_single_wizard(interaction: discord.Interaction, bot: command
         )
         return
 
-    view = AddSingleWizardView(bot, interaction.user)
-    embed = view.build_embed()
+    view = UpdateSingleWizardView(interaction.client, interaction.user)
+    view.state["inventory_id"] = card_row["inventory_id"]
 
+    embed = view.build_embed()
     msg = await admin_channel.send(embed=embed, view=view)
     view.message = msg
 
     await interaction.response.defer(ephemeral=True)
 
 
+
 __all__ = [
-    "AddSingleWizardView",
-    "start_add_single_wizard",
+    "UpdateSingleWizardView",
+    "start_update_single_wizard",
     "WizardStep",
     "ConditionSelect",
     "SeriesSelect",

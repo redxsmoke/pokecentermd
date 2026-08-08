@@ -567,8 +567,13 @@ class Inventory(commands.Cog):
 
 async def setup(bot):
     print("INVENTORY COG LOADED")
+<<<<<<< HEAD
     await bot.add_cog(Inventory(bot))
 
 
 
+
+async def setup(bot):
+    print("INVENTORY COG LOADED")
+    await bot.add_cog(Inventory(bot))
 

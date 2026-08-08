@@ -69,7 +69,6 @@ class InventoryCSVImport(commands.Cog):
 
         invalid_image_found = False
         valid_image_found = False
-
         async with self.bot.db.acquire() as conn:
             for idx, row in enumerate(rows, start=2):
 
@@ -152,8 +151,10 @@ class InventoryCSVImport(commands.Cog):
                     """,
                     guild_id, pokemon_name, card_number, set_name, series, variant
                 )
-
                 if existing:
+
+                    old_price = existing["price"]
+
                     await conn.execute(
                         """
                         UPDATE inventory
@@ -168,7 +169,70 @@ class InventoryCSVImport(commands.Cog):
                         guild_id
                     )
 
+                    # ⭐ ONLY NOTIFY ON PRICE DROP AND USER HAS A POKEMON NAME FILTER
+                    if (
+                        price is not None
+                        and old_price is not None
+                        and price < old_price
+                    ):
+
+                        filters = await conn.fetch(
+                            "SELECT * FROM user_wishlist WHERE guild_id = $1",
+                            guild_id
+                        )
+
+                        for f in filters:
+
+                            # NEW RULE: user must have pokemon_name populated
+                            if not f["pokemon_name"]:
+                                continue
+
+                            match = True
+
+                            if f["pokemon_name"] and f["pokemon_name"].lower() not in pokemon_name.lower():
+                                match = False
+
+                            if f["variant"] and f["variant"].lower() not in variant.lower():
+                                match = False
+
+                            # Price filter — ONLY notify if price is now BELOW user's max
+                            if f["price"] is not None and price > f["price"]:
+                                match = False
+
+                            if f["condition"] and f["condition"] != condition:
+                                match = False
+
+                            if f["series"] and f["series"] != series:
+                                match = False
+
+                            if f["set_name"] and f["set_name"] != set_name:
+                                match = False
+
+                            if not match:
+                                continue
+
+                            try:
+                                user = await self.bot.fetch_user(f["user_id"])
+                                await user.send(
+                                    embed=discord.Embed(
+                                        title="Wishlist Price Drop!",
+                                        description=(
+                                            f"A card on your wishlist dropped in price:\n\n"
+                                            f"**{pokemon_name}**\n"
+                                            f"Series: {series}\n"
+                                            f"Set: {set_name}\n"
+                                            f"Condition: {condition}\n"
+                                            f"Old Price: ${old_price}\n"
+                                            f"New Price: ${price}"
+                                        ),
+                                        color=discord.Color.green()
+                                    )
+                                )
+                            except Exception as e:
+                                print(f"Failed to DM user {f['user_id']}: {e}")
+
                 else:
+
                     await conn.execute(
                         """
                         INSERT INTO inventory (
@@ -200,6 +264,54 @@ class InventoryCSVImport(commands.Cog):
                         datetime.now().date()
                     )
 
+                    # ⭐ NOTIFY ON INSERT (unchanged)
+                    filters = await conn.fetch(
+                        "SELECT * FROM user_wishlist WHERE guild_id = $1",
+                        guild_id
+                    )
+
+                    for f in filters:
+                        match = True
+
+                        if f["pokemon_name"] and f["pokemon_name"].lower() not in pokemon_name.lower():
+                            match = False
+
+                        if f["variant"] and f["variant"].lower() not in variant.lower():
+                            match = False
+
+                        if f["price"] is not None and (price is None or price > f["price"]):
+                            match = False
+
+                        if f["condition"] and f["condition"] != condition:
+                            match = False
+
+                        if f["series"] and f["series"] != series:
+                            match = False
+
+                        if f["set_name"] and f["set_name"] != set_name:
+                            match = False
+
+                        if not match:
+                            continue
+
+                        try:
+                            user = await self.bot.fetch_user(f["user_id"])
+                            await user.send(
+                                embed=discord.Embed(
+                                    title="Wishlist Match Found!",
+                                    description=(
+                                        f"A new card matching your wishlist was added:\n\n"
+                                        f"**{pokemon_name}**\n"
+                                        f"Series: {series}\n"
+                                        f"Set: {set_name}\n"
+                                        f"Condition: {condition}\n"
+                                        f"Price: ${price}"
+                                    ),
+                                    color=discord.Color.green()
+                                )
+                            )
+                        except Exception as e:
+                            print(f"Failed to DM user {f['user_id']}: {e}")
         if invalid_image_found and valid_image_found:
             warn_embed = discord.Embed(
                 title="⚠️ Image URL Warning",
@@ -222,3 +334,6 @@ class InventoryCSVImport(commands.Cog):
 
 async def setup(bot):
     await bot.add_cog(InventoryCSVImport(bot))
+
+
+
