@@ -1,8 +1,7 @@
 import discord
 from io import BytesIO
+
 from Commands.Admin.update_single_wizard import start_update_single_wizard
-
-
 
 # ---------------------------------------------------------
 #   SAFE SEND — USES RESPONSE OR FOLLOWUP (NO CHANNEL.SEND)
@@ -249,11 +248,17 @@ class UpdateFieldSelect(discord.ui.Select):
             return
 
         if field == "update_all":
-            await interaction.response.defer(ephemeral=True)
-            await start_update_single_wizard(interaction, self.card_row)
+            
+            await start_update_single_wizard(
+                interaction,
+                interaction.client,
+                self.card_row["inventory_id"]
+            )
 
             return
- 
+
+
+
         if field == "hide":
             await hide_card(interaction, self.card_row)
             return
@@ -289,10 +294,10 @@ class UpdatePriceModal(discord.ui.Modal, title="Update Price"):
 
         await interaction.response.defer(ephemeral=True)
 
-        # Store old price BEFORE updating
         old_price = self.card_row["price"]
 
         async with interaction.client.db.acquire() as conn:
+            # --- UPDATE PRICE ---
             await conn.execute(
                 """
                 UPDATE inventory
@@ -304,92 +309,83 @@ class UpdatePriceModal(discord.ui.Modal, title="Update Price"):
                 interaction.guild.id
             )
 
-        # Update local row
-        self.card_row["price"] = new_price
+            # --- ONLY NOTIFY IF PRICE DROPPED ---
+            if new_price < old_price:
 
-        # ---------------------------------------------------------
-        # ⭐ WISHLIST PRICE DROP NOTIFICATION (manual price update)
-        # ---------------------------------------------------------
-        if old_price is not None and new_price < old_price:
+                guild_id = interaction.guild.id
 
-            async with interaction.client.db.acquire() as conn:
+                # Fetch wishlist filters
                 filters = await conn.fetch(
                     "SELECT * FROM user_wishlist WHERE guild_id = $1",
-                    interaction.guild.id
+                    guild_id
                 )
 
-            # Normalize card fields to avoid NoneType crashes
-            card_name = (self.card_row["pokemon_name"] or "").lower()
-            card_variant = (self.card_row["variant"] or "").lower()
-            card_condition = (self.card_row["condition"] or "")
-            card_series = (self.card_row["series"] or "")
-            card_set = (self.card_row["set_name"] or "")
+                pokemon_name = self.card_row["pokemon_name"]
+                variant = self.card_row["variant"] or ""
+                condition = self.card_row["condition"]
+                series = self.card_row["series"]
+                set_name = self.card_row["set_name"]
+                image_link = self.card_row.get("image_link")
 
-            for f in filters:
+                for f in filters:
+                    match = True
 
-                # User MUST have pokemon_name populated
-                if not f["pokemon_name"]:
-                    continue
+                    # Pokémon name LIKE match
+                    if f["pokemon_name"] and f["pokemon_name"].lower() not in pokemon_name.lower():
+                        match = False
 
-                match = True
+                    # Variant LIKE match
+                    if f["variant"] and f["variant"].lower() not in variant.lower():
+                        match = False
 
-                # Normalize wishlist fields
-                wish_name = (f["pokemon_name"] or "").lower()
-                wish_variant = (f["variant"] or "").lower()
-                wish_condition = (f["condition"] or "")
-                wish_series = (f["series"] or "")
-                wish_set = (f["set_name"] or "")
+                    # Price filter — ONLY notify if new price is BELOW user's max
+                    if f["price"] is not None and new_price > f["price"]:
+                        match = False
 
-                # Pokémon name match
-                if wish_name and wish_name not in card_name:
-                    match = False
+                    # Condition exact match
+                    if f["condition"] and f["condition"] != condition:
+                        match = False
 
-                # Variant match
-                if wish_variant and wish_variant not in card_variant:
-                    match = False
+                    # Series exact match
+                    if f["series"] and f["series"] != series:
+                        match = False
 
-                # Price filter — ONLY notify if new price is BELOW user's max
-                if f["price"] is not None and new_price > f["price"]:
-                    match = False
+                    # Set exact match
+                    if f["set_name"] and f["set_name"] != set_name:
+                        match = False
 
-                # Condition match
-                if wish_condition and wish_condition != card_condition:
-                    match = False
+                    if not match:
+                        continue
 
-                # Series match
-                if wish_series and wish_series != card_series:
-                    match = False
+                    # --- SEND DM ---
+                    try:
+                        user = await interaction.client.fetch_user(f["user_id"])
 
-                # Set match
-                if wish_set and wish_set != card_set:
-                    match = False
-
-                if not match:
-                    continue
-
-                # Send DM
-                try:
-                    user = await interaction.client.fetch_user(f["user_id"])
-                    await user.send(
-                        embed=discord.Embed(
+                        embed = discord.Embed(
                             title="Wishlist Price Drop!",
                             description=(
                                 f"A card on your wishlist dropped in price:\n\n"
-                                f"**{self.card_row['pokemon_name']}**\n"
-                                f"Series: {self.card_row['series']}\n"
-                                f"Set: {self.card_row['set_name']}\n"
-                                f"Old Price: ${old_price:.2f}\n"
-                                f"New Price: ${new_price:.2f}"
-                                
-
+                                f"**{pokemon_name}**\n"
+                                f"Series: {series}\n"
+                                f"Set: {set_name}\n"
+                                f"Condition: {condition}\n"
+                                f"Old Price: ${old_price}\n"
+                                f"New Price: ${new_price}"
                             ),
                             color=discord.Color.green()
                         )
-                    )
-                except Exception as e:
-                    print(f"Failed to DM user {f['user_id']}: {e}")
 
-        # ---------------------------------------------------------
+                        # ⭐ Add image thumbnail if available
+                        if image_link:
+                            embed.set_thumbnail(url=image_link)
+
+                        await user.send(embed=embed)
+
+                    except Exception as e:
+                        print(f"Failed to DM user {f['user_id']}: {e}")
+
+        # Update local row
+        self.card_row["price"] = new_price
 
         await send_update_success(interaction, self.card_row, "Price updated successfully.")
 

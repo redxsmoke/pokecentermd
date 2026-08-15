@@ -565,13 +565,6 @@ class Inventory(commands.Cog):
 
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
-    print("INVENTORY COG LOADED")
-<<<<<<< HEAD
-    await bot.add_cog(Inventory(bot))
-
-
-
 
 async def setup(bot):
     print("INVENTORY COG LOADED")

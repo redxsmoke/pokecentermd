@@ -2,106 +2,6 @@ import discord
 from discord.ext import commands
 import datetime
 
-class MyOrders(commands.Cog):
-    def __init__(self, bot):
-        self.bot = bot
-
-    # =====================================================================
-    # FETCH PAYMENT SETTINGS FROM DB
-    # =====================================================================
-    async def get_payment_settings(self, guild_id):
-        async with self.bot.db.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT venmo_handle, cashapp_handle, paypal_handle, admin_id
-                FROM guild_settings
-                WHERE guild_id = $1;
-                """,
-                guild_id
-            )
-        return row
-
-    # =====================================================================
-    # FETCH ITEMS FOR /MYORDERS
-    # =====================================================================
-    async def get_order_items(self, order_id: int):
-        async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT oi.inventory_id,
-                       oi.quantity,
-                       i.pokemon_name,
-                       i.price,
-                       i.condition,
-                       i.series,
-                       i.set_name
-                FROM order_items oi
-                JOIN inventory i ON i.inventory_id = oi.inventory_id
-                WHERE oi.order_id = $1
-                ORDER BY i.pokemon_name ASC;
-                """,
-                order_id
-            )
-        return rows
-
-    # =====================================================================
-    # EMBED BUILDER
-    # =====================================================================
-    def build_order_embed(self, order, page_num: int, total_pages: int, mode: str):
-        title_text = f"📦 Order #{order['order_id']} — {order['order_status']}"
-        if mode == "archived":
-            title_text += " (Orders from the past 30 days)"
-
-        embed = discord.Embed(
-            title=title_text,
-            color=discord.Color.blue()
-        )
-
-        embed.set_footer(text=f"Order {page_num}/{total_pages}")
-
-        timeline = [
-            f"**Placed:** {order['created_at']:%Y-%m-%d}",
-            f"**Paid:** {order['date_paid']:%Y-%m-%d}" if order["date_paid"] else "**Paid:** —",
-            f"**Shipped:** {order['date_shipped']:%Y-%m-%d}" if order["date_shipped"] else "**Shipped:** —",
-            f"**Est. Delivery:** {order['estimated_delivery']:%Y-%m-%d}" if order["estimated_delivery"] else "**Est. Delivery:** —",
-            f"**Delivered:** {order['date_received']:%Y-%m-%d}" if order["date_received"] else "**Delivered:** —",
-        ]
-        embed.add_field(name="🗓️ Timeline", value="\n".join(timeline), inline=False)
-
-        shipping = [
-            f"**Method:** {order['shipping_method']}",
-            f"**Tracking:** {order['tracking_number'] or 'None'}",
-        ]
-        embed.add_field(name="🚚 Shipping", value="\n".join(shipping), inline=False)
-
-        item_lines = []
-        for i in order["items"]:
-            price_each = float(i["price"])
-            qty = i["quantity"]
-            total = round(price_each * qty, 2)
-            item_lines.append(
-                f"• {i['pokemon_name']} — x{qty} (${price_each:.2f} ea, ${total:.2f} total)"
-            )
-
-        embed.add_field(name="🃏 Items", value="\n".join(item_lines), inline=False)
-
-        payment = [
-            f"**Subtotal:** ${order['subtotal']:.2f}",
-            f"**Tax:** ${order['tax']:.22f}",
-            f"**PayPal Fee:** ${order['fee']:.2f}",
-            f"**Shipping:** ${order['shipping_fee']:.2f}",
-            f"**Total:** ${order['total']:.2f}",
-            f"**Method:** {order['payment_method'].capitalize()}",
-        ]
-        embed.add_field(name="💰 Payment", value="\n".join(payment), inline=False)
-
-        status = [
-            f"**Received:** {'Yes' if order['received'] else 'No'}",
-            f"**Cancelled Reason:** {order['cancelled_reason'] or '—'}",
-        ]
-        embed.add_field(name="📌 Status", value="\n".join(status), inline=False)
-
-        return embed
 # =====================================================================
 # ADMIN ORDER VIEW
 # =====================================================================
@@ -115,7 +15,6 @@ class AdminOrderView(discord.ui.View):
         self.shipping_method = shipping_method
         self.admin_id = admin_id
 
-        # Disable shipping buttons until payment is confirmed
         for child in self.children:
             if isinstance(child, discord.ui.Button) and child.label in ("Mark Shipped", "Enter Tracking #"):
                 child.disabled = True
@@ -153,7 +52,6 @@ class AdminOrderView(discord.ui.View):
         estimated_delivery = datetime.date.today() + datetime.timedelta(days=14)
 
         async with self.bot.db.acquire() as conn:
-            # Deduct reserved inventory
             for item in self.items:
                 await conn.execute(
                     """
@@ -179,17 +77,14 @@ class AdminOrderView(discord.ui.View):
                 estimated_delivery
             )
 
-        # Disable payment button
         button.disabled = True
 
-        # Enable shipping buttons
         for child in self.children:
             if isinstance(child, discord.ui.Button) and child.label == "Mark Shipped":
                 child.disabled = False
 
         await interaction.message.edit(view=self)
 
-        # Notify buyer
         buyer = await interaction.client.fetch_user(self.user_id)
         try:
             await buyer.send(
@@ -278,14 +173,12 @@ class AdminOrderView(discord.ui.View):
 
         button.disabled = True
 
-        # Enable tracking button only if not PWE
         for child in self.children:
             if isinstance(child, discord.ui.Button) and child.label == "Enter Tracking #":
                 child.disabled = ("plain white envelope" in shipping_method)
 
         await interaction.message.edit(view=self)
 
-        # Notify buyer
         buyer = await interaction.client.fetch_user(self.user_id)
         try:
             await buyer.send(
@@ -368,6 +261,7 @@ class AdminOrderView(discord.ui.View):
         await interaction.response.send_modal(
             CancelOrderModal(self.bot, self.order_id, self.user_id, self.items, self, self.admin_id)
         )
+
 # =====================================================================
 # TRACKING NUMBER MODAL
 # =====================================================================
@@ -409,14 +303,12 @@ class TrackingNumberModal(discord.ui.Modal, title="Enter Tracking Number"):
                 self.tracking.value
             )
 
-        # Disable tracking button
         for child in self.admin_view.children:
             if isinstance(child, discord.ui.Button) and child.label == "Enter Tracking #":
                 child.disabled = True
 
         await interaction.message.edit(view=self.admin_view)
 
-        # Notify buyer
         buyer = await interaction.client.fetch_user(self.user_id)
         try:
             await buyer.send(
@@ -437,7 +329,6 @@ class TrackingNumberModal(discord.ui.Modal, title="Enter Tracking Number"):
             ),
             ephemeral=True
         )
-
 
 # =====================================================================
 # CANCEL ORDER MODAL
@@ -487,7 +378,6 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 )
                 return
 
-            # Restore inventory
             for item in self.items:
                 await conn.execute(
                     """
@@ -512,7 +402,6 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 self.reason.value
             )
 
-        # Notify buyer
         buyer = await interaction.client.fetch_user(self.user_id)
         try:
             await buyer.send(
@@ -534,13 +423,59 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
             ephemeral=True
         )
 
-        # Disable cancel button
         for child in self.admin_view.children:
             if isinstance(child, discord.ui.Button) and child.label == "Cancel Order":
                 child.disabled = True
 
         await interaction.message.edit(view=self.admin_view)
+# =====================================================================
+# ADMIN TRACKING RESPONSE MODAL
+# =====================================================================
+class AdminTrackingResponseModal(discord.ui.Modal, title="Provide Status Update"):
+    def __init__(self, bot, order_id, user_id):
+        super().__init__()
+        self.bot = bot
+        self.order_id = order_id
+        self.user_id = user_id
 
+        self.message = discord.ui.TextInput(
+            label="Status Update Message",
+            placeholder="Type the update you want to send to the buyer...",
+            style=discord.TextStyle.long,
+            required=True,
+            max_length=500
+        )
+        self.add_item(self.message)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            buyer = await interaction.client.fetch_user(self.user_id)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"Error fetching buyer: {e}",
+                ephemeral=True
+            )
+            return
+
+        embed = discord.Embed(
+            title=f"Update on Order #{self.order_id}",
+            description=self.message.value,
+            color=discord.Color.blue()
+        )
+
+        try:
+            await buyer.send(embed=embed)
+        except Exception as e:
+            await interaction.response.send_message(
+                f"Could not DM buyer: {e}",
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.send_message(
+            f"Status update sent to buyer for Order #{self.order_id}.",
+            ephemeral=True
+        )
 
 # =====================================================================
 # ADMIN NOT RECEIVED VIEW
@@ -566,7 +501,6 @@ class AdminNotReceivedView(discord.ui.View):
                 self.order_id
             )
 
-        # Notify buyer
         buyer = await interaction.client.fetch_user(self.user_id)
         try:
             await buyer.send(
@@ -594,6 +528,45 @@ class AdminNotReceivedView(discord.ui.View):
             AdminTrackingResponseModal(self.bot, self.order_id, self.user_id)
         )
 
+# =====================================================================
+# BUYER BUTTON — MARK RECEIVED
+# =====================================================================
+class MarkReceivedButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Mark Received",
+            style=discord.ButtonStyle.success,
+            custom_id="mark_received"
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction):
+        order = self.parent_view.pages[self.parent_view.page]
+
+        async with self.parent_view.bot.db.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE orders
+                SET received = TRUE,
+                    date_received = NOW(),
+                    order_status = 'Delivered'
+                WHERE order_id = $1;
+                """,
+                order["order_id"]
+            )
+
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Order Updated",
+                description=f"Order #{order['order_id']} marked as **Received**.",
+                color=discord.Color.green()
+            ),
+            ephemeral=True
+        )
+
+        # Rebuild lists and refresh view
+        self.parent_view.refresh_order_lists()
+        await self.parent_view.update(interaction)
 
 # =====================================================================
 # BUYER BUTTON — MARK NOT RECEIVED
@@ -613,7 +586,6 @@ class MarkNotReceivedButton(discord.ui.Button):
         estimated = order["estimated_delivery"]
         today = datetime.date.today()
 
-        # Already reported?
         if order.get("reported_missing", False):
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -625,7 +597,6 @@ class MarkNotReceivedButton(discord.ui.Button):
             )
             return
 
-        # Not shipped yet
         if estimated is None:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -641,7 +612,6 @@ class MarkNotReceivedButton(discord.ui.Button):
             )
             return
 
-        # Too early
         if today < estimated:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -656,7 +626,6 @@ class MarkNotReceivedButton(discord.ui.Button):
             )
             return
 
-        # Update DB
         async with self.parent_view.bot.db.acquire() as conn:
             await conn.execute(
                 """
@@ -685,7 +654,6 @@ class MarkNotReceivedButton(discord.ui.Button):
             ephemeral=True
         )
 
-        # Notify admin
         admin = await interaction.client.fetch_user(self.parent_view.admin_id)
 
         admin_embed = discord.Embed(
@@ -714,201 +682,284 @@ class MarkNotReceivedButton(discord.ui.Button):
             pass
 
 # =====================================================================
-# USER ORDER VIEW (Buyer-facing view)
+# BUYER BUTTON — PAY
+# =====================================================================
+class PayButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Pay",
+            style=discord.ButtonStyle.success,
+            custom_id="pay_now"
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        order = self.parent_view.pages[self.parent_view.page]
+
+        # Do not allow pay on cancelled orders
+        if order["order_status"] == "Cancelled":
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="Order Cancelled",
+                    description="This order has been cancelled and cannot be paid.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
+        # Load payment config
+        async with self.parent_view.bot.db.acquire() as conn:
+            config = await conn.fetchrow(
+                """
+                SELECT venmo_handle, cashapp_handle, paypal_handle
+                FROM guild_settings
+                WHERE guild_id = $1;
+                """,
+                interaction.guild_id
+            )
+
+        # ✅ Strip whitespace AND leading '@' from handles
+        venmo = (config["venmo_handle"] or "").strip().lstrip("@")
+        cashapp = (config["cashapp_handle"] or "").strip()
+        paypal = (config["paypal_handle"] or "").strip()
+
+        total = float(order["total"])
+        method = (order["payment_method"] or "").lower()
+
+        if method == "venmo" and venmo:
+            # ✅ Correct Venmo URL format
+            link = f"https://venmo.com/{venmo}?txn=pay&amount={total}"
+            label = "Venmo Payment Link"
+        elif method == "cashapp" and cashapp:
+            link = f"https://cash.app/{cashapp}/{total}"
+            label = "CashApp Payment Link"
+        elif method == "paypal" and paypal:
+            link = f"https://paypal.me/{paypal}/{total}"
+            label = "PayPal Payment Link"
+        else:
+            link = None
+            label = "Payment Not Configured"
+
+        if not link:
+            embed = discord.Embed(
+                title="Payment Not Configured",
+                description="This payment method is not configured for this guild.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        embed = discord.Embed(
+            title="Complete Your Payment",
+            description=(
+                f"**Order ID:** {order['order_id']}\n"
+                f"**Total Due:** ${total:.2f}\n"
+                f"**Payment Method:** {order['payment_method'].capitalize()}\n\n"
+                f"{label}:\n{link}"
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# =====================================================================
+# BUYER-FACING VIEW — ACTIVE / DELIVERED DROPDOWN
 # =====================================================================
 class MyOrdersView(discord.ui.View):
-    def __init__(self, bot, user_id, active_orders, archived_orders, mode="active", admin_id=None):
-        super().__init__(timeout=180)
+    def __init__(self, bot, user_id, active_orders, delivered_orders, mode, admin_id):
+        super().__init__(timeout=None)
         self.bot = bot
         self.user_id = user_id
-
         self.active_orders = active_orders
-        self.archived_orders = archived_orders
-        self.mode = mode
-
-        # Pages for pagination
-        self.pages = active_orders if mode == "active" else archived_orders
-        self.page = 0
-
-        # Dynamic admin ID
+        self.delivered_orders = delivered_orders
         self.admin_id = admin_id
 
-        # Dropdown selector
-        self.add_item(OrderCategoryDropdown(self))
+        # Force default to ACTIVE mode
+        self.mode = "active"
+        self.page = 0
 
-        # Add buyer buttons
-        self.refresh_buttons()
+        # Current pages always derived from mode
+        self.pages = self.active_orders
 
-    def refresh_buttons(self):
-        """Adds or removes buyer buttons depending on mode and order status."""
-        # Remove old buttons
+        # Dropdown (row 1)
+        self.add_item(self.OrderTabDropdown(self))
+
+        # Buyer buttons (row 2)
+        self.add_buyer_buttons()
+
+    # -----------------------------------------------------------------
+    # DROPDOWN SELECTOR
+    # -----------------------------------------------------------------
+    class OrderTabDropdown(discord.ui.Select):
+        def __init__(self, parent_view):
+            self.parent_view = parent_view
+
+            options = [
+                discord.SelectOption(
+                    label="Active Orders",
+                    description="View all active orders",
+                    value="active"
+                ),
+                discord.SelectOption(
+                    label="Delivered Orders",
+                    description="View all delivered orders",
+                    value="delivered"
+                )
+            ]
+
+            super().__init__(
+                placeholder="Select order category...",
+                min_values=1,
+                max_values=1,
+                options=options,
+                row=1
+            )
+
+        async def callback(self, interaction):
+            choice = self.values[0]
+
+            if choice == "active":
+                self.parent_view.mode = "active"
+                self.parent_view.page = 0
+            else:
+                self.parent_view.mode = "delivered"
+                self.parent_view.page = 0
+
+            await self.parent_view.update(interaction)
+
+    # -----------------------------------------------------------------
+    # REFRESH ORDER LISTS AFTER STATUS CHANGE
+    # -----------------------------------------------------------------
+    def refresh_order_lists(self):
+        new_active = []
+        new_delivered = []
+
+        for order in self.active_orders + self.delivered_orders:
+            if order["order_status"] == "Delivered":
+                new_delivered.append(order)
+            else:
+                new_active.append(order)
+
+        self.active_orders = new_active
+        self.delivered_orders = new_delivered
+
+        # Re-derive pages from mode
+        if self.mode == "active":
+            self.pages = self.active_orders
+        else:
+            self.pages = self.delivered_orders
+
+        if self.page >= len(self.pages):
+            self.page = 0
+
+    # -----------------------------------------------------------------
+    # BUYER BUTTON LOGIC
+    # -----------------------------------------------------------------
+    def add_buyer_buttons(self):
+        # Remove existing buyer buttons
         for child in list(self.children):
-            if isinstance(child, discord.ui.Button) and child.custom_id in ("mark_received", "mark_not_received"):
+            if isinstance(child, (MarkReceivedButton, MarkNotReceivedButton, PayButton)):
                 self.remove_item(child)
 
-        # Only show buttons on active orders
+        # Only show buttons on active tab
         if self.mode != "active":
             return
+
+        self.pages = self.active_orders
 
         if not self.pages:
             return
 
         order = self.pages[self.page]
 
-        # Delivered or Cancelled → no buttons
-        if order["order_status"] in ("Delivered", "Cancelled"):
+        # Pay button first — only if unpaid and not cancelled
+        if order.get("date_paid") is None and order["order_status"] != "Cancelled":
+            self.add_item(PayButton(self))
+
+        # If delivered, no received/not received buttons
+        if order["order_status"] == "Delivered":
             return
 
-        # Add Mark Received
+        # Then Mark Received / Mark Not Received
         self.add_item(MarkReceivedButton(self))
+        self.add_item(MarkNotReceivedButton(self))
 
-        # Add Mark Not Received (unless PWE)
-        if "plain white envelope" not in order["shipping_method"].lower():
-            self.add_item(MarkNotReceivedButton(self))
-
+    # -----------------------------------------------------------------
+    # UPDATE VIEW
+    # -----------------------------------------------------------------
     async def update(self, interaction):
-        """Refreshes the embed + buttons when user changes page or category."""
+        # Always derive pages from mode
+        if self.mode == "active":
+            self.pages = self.active_orders
+        else:
+            self.pages = self.delivered_orders
+
+        # Empty states
         if not self.pages:
-            await interaction.response.edit_message(
-                embed=discord.Embed(
-                    title="No Orders",
-                    description="There are no orders in this category.",
-                    color=discord.Color.orange()
-                ),
-                view=self
-            )
+            if self.mode == "active":
+                embed = discord.Embed(
+                    title="Active Orders",
+                    description="You don't currently have any active orders. Use /shop to place an order.",
+                    color=discord.Color.blue()
+                )
+            else:
+                embed = discord.Embed(
+                    title="Delivered Orders",
+                    description="You don't have any delivered orders yet.",
+                    color=discord.Color.blue()
+                )
+
+            await interaction.response.edit_message(embed=embed, view=self)
             return
 
-        cog = interaction.client.get_cog("MyOrders")
+        # Clamp page
+        if self.page >= len(self.pages):
+            self.page = 0
 
-        embed = cog.build_order_embed(
+        embed = interaction.client.get_cog("MyOrders").build_order_embed(
             self.pages[self.page],
             self.page + 1,
             len(self.pages),
             self.mode
         )
 
-        # Refresh buyer buttons
-        self.refresh_buttons()
+        if self.mode == "active":
+            embed.set_footer(text="Only active orders (orders that have not been delivered) are displayed.")
+        else:
+            embed.set_footer(text="Delivered orders are shown here.")
+
+        self.add_buyer_buttons()
 
         await interaction.response.edit_message(embed=embed, view=self)
 
-    @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary)
+    # -----------------------------------------------------------------
+    # PAGINATION BUTTONS
+    # -----------------------------------------------------------------
+    @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary, row=0)
     async def previous(self, interaction, button):
+        if self.mode == "active":
+            self.pages = self.active_orders
+        else:
+            self.pages = self.delivered_orders
+
         if self.page > 0:
             self.page -= 1
         await self.update(interaction)
 
-    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary, row=0)
     async def next(self, interaction, button):
+        if self.mode == "active":
+            self.pages = self.active_orders
+        else:
+            self.pages = self.delivered_orders
+
         if self.page < len(self.pages) - 1:
             self.page += 1
         await self.update(interaction)
 
 
-# =====================================================================
-# DROPDOWN SELECTOR
-# =====================================================================
-class OrderCategoryDropdown(discord.ui.Select):
-    def __init__(self, parent_view):
-        self.parent_view = parent_view
-
-        options = [
-            discord.SelectOption(
-                label="Active Orders",
-                description="Pending, Paid, Shipped, Not Received",
-                value="active"
-            ),
-            discord.SelectOption(
-                label="Archived Orders",
-                description="Delivered or Cancelled (Past 30 Days)",
-                value="archived"
-            )
-        ]
-
-        super().__init__(
-            placeholder="Select Order Category...",
-            min_values=1,
-            max_values=1,
-            options=options
-        )
-
-    async def callback(self, interaction):
-        mode = self.values[0]
-        self.parent_view.mode = mode
-
-        if mode == "active":
-            self.parent_view.pages = self.parent_view.active_orders
-        else:
-            self.parent_view.pages = self.parent_view.archived_orders
-
-        self.parent_view.page = 0
-        await self.parent_view.update(interaction)
-
-
-# =====================================================================
-# BUYER BUTTON — MARK RECEIVED
-# =====================================================================
-class MarkReceivedButton(discord.ui.Button):
-    def __init__(self, parent_view):
-        super().__init__(
-            label="Mark Received",
-            style=discord.ButtonStyle.success,
-            custom_id="mark_received"
-        )
-        self.parent_view = parent_view
-
-    async def callback(self, interaction):
-        order = self.parent_view.pages[self.parent_view.page]
-        order_id = order["order_id"]
-
-        # Update DB
-        async with self.parent_view.bot.db.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE orders
-                SET received = TRUE,
-                    date_received = NOW(),
-                    order_status = 'Delivered'
-                WHERE order_id = $1;
-                """,
-                order_id
-            )
-
-        # Buyer confirmation
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Order Updated",
-                description=f"Order #{order_id} marked as **Received**.",
-                color=discord.Color.green()
-            ),
-            ephemeral=True
-        )
-
-        # Notify admin
-        try:
-            admin = await interaction.client.fetch_user(self.parent_view.admin_id)
-            await admin.send(
-                embed=discord.Embed(
-                    title="Order Marked as Received",
-                    description=(
-                        f"**Order ID:** {order_id}\n"
-                        f"**Buyer:** <@{self.parent_view.user_id}>\n"
-                        f"**Date:** {datetime.date.today().strftime('%Y-%m-%d')}\n\n"
-                        "The buyer has marked their order as **Received**."
-                    ),
-                    color=discord.Color.green()
-                )
-            )
-        except:
-            pass
-
-        await self.parent_view.update(interaction)
-
-
-# =====================================================================
-# SETUP — REGISTER ONLY THE MyOrders COG (NOT the slash command)
-# =====================================================================
 async def setup(bot):
-    await bot.add_cog(MyOrders(bot))
+    pass
 

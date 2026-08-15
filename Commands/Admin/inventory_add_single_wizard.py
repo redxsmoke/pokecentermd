@@ -485,7 +485,6 @@ async def insert_card_into_db(state, bot, guild_id):
         #
         # ⭐ WISHLIST MATCHING TRIGGER
         #
-        # Load all wishlist filters for this guild
         filters = await conn.fetch(
             """
             SELECT *
@@ -526,23 +525,29 @@ async def insert_card_into_db(state, bot, guild_id):
             if not match:
                 continue
 
-        
+            # --- SEND DM TO USER ---
             try:
                 user = await bot.fetch_user(f["user_id"])
-                await user.send(
-                    embed=discord.Embed(
-                        title="Wishlist Match Found!",
-                        description=(
-                            f"A new card matching your wishlist was added:\n\n"
-                            f"**{state['pokemon_name']}**\n"
-                            f"Series: {state['series']}\n"
-                            f"Set: {state['set_name']}\n"
-                            f"Condition: {state['condition']}\n"
-                            f"Price: ${state['price']}"
-                        ),
-                        color=discord.Color.green()
-                    )
+
+                embed = discord.Embed(
+                    title="Wishlist Match Found!",
+                    description=(
+                        f"A new card matching your wishlist was added:\n\n"
+                        f"**{state['pokemon_name']}**\n"
+                        f"Series: {state['series']}\n"
+                        f"Set: {state['set_name']}\n"
+                        f"Condition: {state['condition']}\n"
+                        f"Price: ${state['price']}"
+                    ),
+                    color=discord.Color.green()
                 )
+
+                # ⭐ Add image thumbnail if available
+                if state["image_link"]:
+                    embed.set_thumbnail(url=state["image_link"])
+
+                await user.send(embed=embed)
+
             except Exception as e:
                 print(f"Failed to DM user {f['user_id']}: {e}")
 
