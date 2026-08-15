@@ -101,7 +101,7 @@ class Cart(commands.Cog):
             f"**Tax (est):** ${tax:.2f}\n"
             f"**Shipping:** PWE $1.50 or Tracked $4.95\n"
             f"**PayPal Fee (est):** ${paypal_fee:.2f}\n"
-            f"**Total (est, before shipping):** ${round(subtotal + tax, 2):.2f}\n"
+            f"**Total (est, before shipping):** ${round(subtotal + tax + paypal_fee, 2):.2f}\n"
             f"_Final total shown at checkout based on chosen shipping and payment method._\n"
         )
 
@@ -134,7 +134,6 @@ class RemoveItemSelect(discord.ui.Select):
         self.items = items
 
     async def callback(self, interaction: discord.Interaction):
-
         choice = self.values[0]
 
         async with self.bot.db.acquire() as conn:
@@ -204,6 +203,7 @@ class RemoveItemSelect(discord.ui.Select):
                 color=discord.Color.green()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
+
 class ClearCartButton(discord.ui.Button):
     def __init__(self, bot, user_id):
         super().__init__(label="Clear All", style=discord.ButtonStyle.danger)
@@ -391,19 +391,17 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
         subtotal = sum(i["price"] * i["quantity"] for i in items)
         tax = round(subtotal * 0.06, 2)
         total_before_shipping = subtotal + tax
-        total = round(total_before_shipping + shipping_cost, 2)
 
         config = await get_guild_payment_config(self.bot, interaction.guild_id)
-        paypal_handle = (config["paypal_handle"] or "").strip()
 
         if self.payment_method == "paypal":
             paypal_fee = round(total_before_shipping * 0.04, 2)
-            self.paypal_fee = paypal_fee
-            grand_total = round(total + paypal_fee, 2)
         else:
             paypal_fee = 0
-            self.paypal_fee = 0
-            grand_total = total
+
+        total = round(total_before_shipping + shipping_cost + paypal_fee, 2)
+        self.total = total
+        self.paypal_fee = paypal_fee
 
         reservation_msg = (
             "Your cards are now reserved for 15 minutes — "
@@ -453,7 +451,7 @@ class CheckoutModal(discord.ui.Modal, title="Shipping Information"):
                 f"**Tax:** ${tax:.2f}\n"
                 f"**Shipping:** ${shipping_cost:.2f}\n"
                 f"**PayPal Fee:** ${paypal_fee:.2f}\n"
-                f"**Grand Total:** ${grand_total:.2f}"
+                f"**Total:** ${total:.2f}"
             ),
             inline=False
         )
@@ -669,15 +667,14 @@ class FinalizeOrderView(discord.ui.View):
         self.address = address
 
         self.total_before_shipping = subtotal + tax
-        self.total = round(self.total_before_shipping + shipping_cost, 2)
 
         if payment_method == "paypal":
             paypal_fee = round(self.total_before_shipping * 0.04, 2)
-            self.paypal_fee = paypal_fee
-            self.grand_total = round(self.total + paypal_fee, 2)
         else:
-            self.paypal_fee = 0
-            self.grand_total = self.total
+            paypal_fee = 0
+
+        self.total = round(self.total_before_shipping + shipping_cost + paypal_fee, 2)
+        self.paypal_fee = paypal_fee
 
         self.message = None
 
@@ -754,16 +751,10 @@ class FinalizeOrderView(discord.ui.View):
         config = await get_guild_payment_config(self.bot, interaction.guild_id)
         admin_id = config["admin_id"]
 
-        if self.payment_method == "venmo":
-            payment_handle = (config["venmo_handle"] or "").strip()
-        elif self.payment_method == "cashapp":
-            payment_handle = (config["cashapp_handle"] or "").strip()
-        elif self.payment_method == "paypal":
-            payment_handle = (config["paypal_handle"] or "").strip()
-        else:
-            payment_handle = ""
-
-        await interaction.client.get_cog("MyOrders").create_order(
+        # ============================================================
+        # UPDATED: buyer_name + shipping_address now passed to create_order
+        # ============================================================
+        order_id = await interaction.client.get_cog("MyOrders").create_order(
             interaction,
             self.user_id,
             self.items,
@@ -772,12 +763,10 @@ class FinalizeOrderView(discord.ui.View):
             self.paypal_fee,
             self.shipping_cost,
             self.total,
-            self.grand_total,
-            self.name,
-            self.address,
-            self.shipping_label,
             self.payment_method,
-            payment_handle,
+            self.shipping_label,
+            self.name,          # <-- buyer_name
+            self.address,       # <-- shipping_address
             admin_id
         )
 
@@ -787,10 +776,49 @@ class FinalizeOrderView(discord.ui.View):
                 self.user_id
             )
 
-        await interaction.followup.send(
-            "Order submitted! Your cart has been cleared.",
-            ephemeral=True
+
+        async with self.bot.db.acquire() as conn:
+            config = await conn.fetchrow(
+                """
+                SELECT venmo_handle, cashapp_handle, paypal_handle
+                FROM guild_settings
+                WHERE guild_id = $1;
+                """,
+                interaction.guild_id
+            )
+
+        venmo = (config["venmo_handle"] or "").strip().lstrip("@")
+        cashapp = (config["cashapp_handle"] or "").strip()
+        paypal = (config["paypal_handle"] or "").strip()
+
+        total = float(self.total)
+        method = self.payment_method.lower()
+
+        if method == "venmo" and venmo:
+            link = f"https://venmo.com/{venmo}?txn=pay&amount={total}"
+            label = "Venmo Payment Link"
+        elif method == "cashapp" and cashapp:
+            link = f"https://cash.app/{cashapp}/{total}"
+            label = "CashApp Payment Link"
+        elif method == "paypal" and paypal:
+            link = f"https://paypal.me/{paypal}/{total}"
+            label = "PayPal Payment Link"
+        else:
+            link = None
+            label = "Payment Not Configured"
+
+        confirm_embed = discord.Embed(
+            title="Order Confirmed. Please complete your payment",
+            description=(
+                f"**Order ID:** {order_id}\n"
+                f"**Total Due:** ${total:.2f}\n"
+                f"**Payment Method:** {self.payment_method.capitalize()}\n\n"
+                f"{label}:\n{link}"
+            ),
+            color=discord.Color.green()
         )
+
+        await interaction.followup.send(embed=confirm_embed, ephemeral=True)
 
     @discord.ui.button(label="Cancel Order", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -855,9 +883,5 @@ class FinalizeOrderView(discord.ui.View):
             view=self
         )
 
-
 async def setup(bot):
     await bot.add_cog(Cart(bot))
-
-
-

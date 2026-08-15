@@ -13,7 +13,7 @@ class WizardStep:
     CONFIRM = 7
 
 
-class AddSingleWizardView(ui.View):
+class UpdateSingleWizardView(ui.View):
     def __init__(self, bot, user):
         super().__init__(timeout=1200)
         self.bot = bot
@@ -33,6 +33,7 @@ class AddSingleWizardView(ui.View):
             "grading_company": None,
             "grade": None,
             "image_link": None,
+            "inventory_id": None,
         }
 
         self.step = WizardStep.POKEMON_NAME
@@ -206,7 +207,7 @@ class AddSingleWizardView(ui.View):
 
 
 class ConditionSelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         options = [
             discord.SelectOption(label="Near Mint", value="Near Mint"),
             discord.SelectOption(label="Lightly Played", value="Lightly Played"),
@@ -230,7 +231,7 @@ class ConditionSelect(ui.Select):
 
 
 class SeriesSelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView, options: list[discord.SelectOption]):
+    def __init__(self, wizard: UpdateSingleWizardView, options: list[discord.SelectOption]):
         super().__init__(placeholder="Select Series", options=options)
         self.wizard = wizard
 
@@ -242,7 +243,7 @@ class SeriesSelect(ui.Select):
 
 
 class SetSelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView, options: list[discord.SelectOption]):
+    def __init__(self, wizard: UpdateSingleWizardView, options: list[discord.SelectOption]):
         super().__init__(placeholder="Select Set", options=options)
         self.wizard = wizard
 
@@ -254,7 +255,7 @@ class SetSelect(ui.Select):
 
 
 class GradingCompanySelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         options = [
             discord.SelectOption(label="PSA", value="PSA"),
             discord.SelectOption(label="CGC", value="CGC"),
@@ -274,7 +275,7 @@ class GradingCompanySelect(ui.Select):
 
 
 class GradeSelect(ui.Select):
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         options = [discord.SelectOption(label=str(i), value=str(i)) for i in range(1, 11)]
         options.append(discord.SelectOption(label="Enter custom grade", value="custom"))
         super().__init__(placeholder="Select Grade", options=options)
@@ -294,7 +295,7 @@ class GradeSelect(ui.Select):
 class CustomGradeModal(ui.Modal, title="Enter Custom Grade"):
     grade = ui.TextInput(label="Custom Grade")
 
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         super().__init__()
         self.wizard = wizard
 
@@ -311,7 +312,7 @@ class CombinedCardInfoModal(ui.Modal, title="Card Details"):
     rarity = ui.TextInput(label="Rarity", required=False)
     quantity = ui.TextInput(label="Quantity")
 
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         super().__init__()
         self.wizard = wizard
 
@@ -342,7 +343,7 @@ class CombinedCardInfoModal(ui.Modal, title="Card Details"):
 class PriceModal(ui.Modal, title="Enter Price"):
     price = ui.TextInput(label="Price")
 
-    def __init__(self, wizard: AddSingleWizardView):
+    def __init__(self, wizard: UpdateSingleWizardView):
         super().__init__()
         self.wizard = wizard
 
@@ -372,8 +373,21 @@ class ImageDecisionView(ui.View):
         self.state = state
         self.user = user
 
+        # The original image is stored BEFORE the wizard mutates state
+        self.original_image = state.get("original_image")
+
+        # Dynamic button labels
+        if self.original_image:
+            self.upload_image.label = "Update Image"
+            self.skip_image.label = "Don't Update Image"
+        else:
+            self.upload_image.label = "Upload Image"
+            self.skip_image.label = "Don't Upload Image"
+
     @ui.button(label="Upload Image", style=discord.ButtonStyle.primary)
     async def upload_image(self, interaction: discord.Interaction, button: ui.Button):
+
+        # Ask user to upload an image
         embed = discord.Embed(
             title="Upload Image",
             description="Please upload an image in this channel. I will use the first attachment you send.",
@@ -381,6 +395,7 @@ class ImageDecisionView(ui.View):
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
+        # Wait for the user's image
         def check(m: discord.Message):
             return (
                 m.author.id == self.user.id
@@ -415,6 +430,7 @@ class ImageDecisionView(ui.View):
             )
             return
 
+        # Upload image to admin channel
         file = discord.File(BytesIO(file_bytes), filename="card.jpg")
         sent_msg = await admin_channel.send(file=file)
 
@@ -422,13 +438,19 @@ class ImageDecisionView(ui.View):
         if "?" in url:
             url = url.split("?")[0]
 
+        # Replace image with new one
         self.state["image_link"] = url
 
-        await insert_card_into_db(self.state, self.bot, interaction.guild.id)
+        await update_card_in_db(
+            self.state,
+            self.bot,
+            interaction.guild.id,
+            self.state["inventory_id"]
+        )
 
         done = discord.Embed(
-            title="Card Added",
-            description="Card added to inventory successfully.",
+            title="Card Updated",
+            description="Details for this card have been updated successfully.",
             color=discord.Color.green(),
         )
         await interaction.followup.send(embed=done, ephemeral=True)
@@ -437,34 +459,65 @@ class ImageDecisionView(ui.View):
     @ui.button(label="Don't Upload Image", style=discord.ButtonStyle.secondary)
     async def skip_image(self, interaction: discord.Interaction, button: ui.Button):
 
-        await insert_card_into_db(self.state, self.bot, interaction.guild.id)
+        # Restore original image (THIS IS THE FIX)
+        self.state["image_link"] = self.original_image
+
+        await update_card_in_db(
+            self.state,
+            self.bot,
+            interaction.guild.id,
+            self.state["inventory_id"]
+        )
 
         embed = discord.Embed(
-            title="Card Added",
-            description="Card added to inventory successfully.",
+            title="Card Updated",
+            description="Details for this card have been updated successfully.",
             color=discord.Color.green(),
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # FIX: followup.send prevents timeout
+        await interaction.followup.send(embed=embed, ephemeral=True)
+
         self.stop()
 
+    @ui.button(label="Don't Upload Image", style=discord.ButtonStyle.secondary)
+    async def skip_image(self, interaction: discord.Interaction, button: ui.Button):
 
-async def insert_card_into_db(state, bot, guild_id):
+        # Correct: restore original image
+        self.state["image_link"] = self.original_image
+
+        await update_card_in_db(
+            self.state,
+            self.bot,
+            interaction.guild.id,
+            self.state["inventory_id"]
+        )
+        ...
+
+
+async def update_card_in_db(state, bot, guild_id, inventory_id):
     async with bot.db.acquire() as conn:
-        # Insert the new card
+
+        # --- UPDATE THE CARD ---
         await conn.execute(
             """
-            INSERT INTO inventory (
-                csv_id, pokemon_name, series, set_name, card_number,
-                variant, rarity, price, graded, grading_company, grade,
-                quantity_available, image_link, condition,
-                reserved, reserved_until, date_added, guild_id
-            )
-            VALUES (
-                'manual_add', $1, $2, $3, $4,
-                $5, $6, $7, $8, $9, $10,
-                $11, $12, $13,
-                0, NULL, CURRENT_DATE, $14
-            )
+            UPDATE inventory
+            SET
+                pokemon_name = $1,
+                series = $2,
+                set_name = $3,
+                card_number = $4,
+                variant = $5,
+                rarity = $6,
+                price = $7,
+                graded = $8,
+                grading_company = $9,
+                grade = $10,
+                quantity_available = $11,
+                image_link = $12,
+                condition = $13,
+                guild_id = $14
+            WHERE inventory_id = $15
             """,
             state["pokemon_name"],
             state["series"],
@@ -479,12 +532,11 @@ async def insert_card_into_db(state, bot, guild_id):
             state["quantity_available"],
             state["image_link"],
             state["condition"],
-            guild_id
+            guild_id,
+            inventory_id
         )
 
-        #
-        # ⭐ WISHLIST MATCHING TRIGGER
-        #
+        # --- FETCH WISHLIST FILTERS ---
         filters = await conn.fetch(
             """
             SELECT *
@@ -494,7 +546,7 @@ async def insert_card_into_db(state, bot, guild_id):
             guild_id
         )
 
-        # Compare the new card against each wishlist filter
+        # --- CHECK FOR MATCHES ---
         for f in filters:
             match = True
 
@@ -532,7 +584,7 @@ async def insert_card_into_db(state, bot, guild_id):
                 embed = discord.Embed(
                     title="Wishlist Match Found!",
                     description=(
-                        f"A new card matching your wishlist was added:\n\n"
+                        f"A card matching your wishlist was updated:\n\n"
                         f"**{state['pokemon_name']}**\n"
                         f"Series: {state['series']}\n"
                         f"Set: {state['set_name']}\n"
@@ -551,7 +603,6 @@ async def insert_card_into_db(state, bot, guild_id):
             except Exception as e:
                 print(f"Failed to DM user {f['user_id']}: {e}")
 
-
 async def get_admin_channel(bot, guild_id):
     async with bot.db.acquire() as conn:
         row = await conn.fetchrow(
@@ -565,7 +616,11 @@ async def get_admin_channel(bot, guild_id):
     return None
 
 
-async def start_add_single_wizard(interaction: discord.Interaction, bot: commands.Bot):
+async def start_update_single_wizard(
+    interaction: discord.Interaction,
+    bot: commands.Bot,
+    inventory_id: int
+):
     admin_channel = await get_admin_channel(bot, interaction.guild.id)
 
     if admin_channel is None:
@@ -575,18 +630,22 @@ async def start_add_single_wizard(interaction: discord.Interaction, bot: command
         )
         return
 
-    view = AddSingleWizardView(bot, interaction.user)
-    embed = view.build_embed()
+    view = UpdateSingleWizardView(bot, interaction.user)
+    view.state["inventory_id"] = inventory_id
+    view.state["original_image"] = card_row["image_link"]
+    view.state["image_link"] = card_row["image_link"]  
 
+    embed = view.build_embed()
     msg = await admin_channel.send(embed=embed, view=view)
     view.message = msg
-
     await interaction.response.defer(ephemeral=True)
 
 
+
+
 __all__ = [
-    "AddSingleWizardView",
-    "start_add_single_wizard",
+    "UpdateSingleWizardView",
+    "start_update_single_wizard",
     "WizardStep",
     "ConditionSelect",
     "SeriesSelect",

@@ -1,6 +1,8 @@
 import discord
 from io import BytesIO
 
+from Commands.Admin.update_single_wizard import start_update_single_wizard
+
 # ---------------------------------------------------------
 #   SAFE SEND — USES RESPONSE OR FOLLOWUP (NO CHANNEL.SEND)
 # ---------------------------------------------------------
@@ -246,7 +248,16 @@ class UpdateFieldSelect(discord.ui.Select):
             return
 
         if field == "update_all":
-            await start_update_all_fields_wizard(interaction, self.card_row)
+            
+            await start_update_single_wizard(
+                interaction,
+                interaction.client,
+                self.card_row["inventory_id"]
+            )
+
+            return
+
+
 
         if field == "hide":
             await hide_card(interaction, self.card_row)
@@ -283,7 +294,10 @@ class UpdatePriceModal(discord.ui.Modal, title="Update Price"):
 
         await interaction.response.defer(ephemeral=True)
 
+        old_price = self.card_row["price"]
+
         async with interaction.client.db.acquire() as conn:
+            # --- UPDATE PRICE ---
             await conn.execute(
                 """
                 UPDATE inventory
@@ -295,7 +309,84 @@ class UpdatePriceModal(discord.ui.Modal, title="Update Price"):
                 interaction.guild.id
             )
 
+            # --- ONLY NOTIFY IF PRICE DROPPED ---
+            if new_price < old_price:
+
+                guild_id = interaction.guild.id
+
+                # Fetch wishlist filters
+                filters = await conn.fetch(
+                    "SELECT * FROM user_wishlist WHERE guild_id = $1",
+                    guild_id
+                )
+
+                pokemon_name = self.card_row["pokemon_name"]
+                variant = self.card_row["variant"] or ""
+                condition = self.card_row["condition"]
+                series = self.card_row["series"]
+                set_name = self.card_row["set_name"]
+                image_link = self.card_row.get("image_link")
+
+                for f in filters:
+                    match = True
+
+                    # Pokémon name LIKE match
+                    if f["pokemon_name"] and f["pokemon_name"].lower() not in pokemon_name.lower():
+                        match = False
+
+                    # Variant LIKE match
+                    if f["variant"] and f["variant"].lower() not in variant.lower():
+                        match = False
+
+                    # Price filter — ONLY notify if new price is BELOW user's max
+                    if f["price"] is not None and new_price > f["price"]:
+                        match = False
+
+                    # Condition exact match
+                    if f["condition"] and f["condition"] != condition:
+                        match = False
+
+                    # Series exact match
+                    if f["series"] and f["series"] != series:
+                        match = False
+
+                    # Set exact match
+                    if f["set_name"] and f["set_name"] != set_name:
+                        match = False
+
+                    if not match:
+                        continue
+
+                    # --- SEND DM ---
+                    try:
+                        user = await interaction.client.fetch_user(f["user_id"])
+
+                        embed = discord.Embed(
+                            title="Wishlist Price Drop!",
+                            description=(
+                                f"A card on your wishlist dropped in price:\n\n"
+                                f"**{pokemon_name}**\n"
+                                f"Series: {series}\n"
+                                f"Set: {set_name}\n"
+                                f"Condition: {condition}\n"
+                                f"Old Price: ${old_price}\n"
+                                f"New Price: ${new_price}"
+                            ),
+                            color=discord.Color.green()
+                        )
+
+                        # ⭐ Add image thumbnail if available
+                        if image_link:
+                            embed.set_thumbnail(url=image_link)
+
+                        await user.send(embed=embed)
+
+                    except Exception as e:
+                        print(f"Failed to DM user {f['user_id']}: {e}")
+
+        # Update local row
         self.card_row["price"] = new_price
+
         await send_update_success(interaction, self.card_row, "Price updated successfully.")
 
 

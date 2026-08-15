@@ -42,7 +42,8 @@ class MyBot(commands.Bot):
             "Commands.Admin.inventory_csv_import",
             "Commands.SellCards.sellcards",
             "Commands.BuyingGuide.buyingguide",
-            "Commands.UpcomingShows.upcomingshows"
+            "Commands.UpcomingShows.upcomingshows",
+            "Commands.wishlist.mywishlist" 
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
