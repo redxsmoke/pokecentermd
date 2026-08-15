@@ -120,7 +120,6 @@ class RefundConfirmView(discord.ui.View):
         except Exception:
             pass
 
-
         refund_embed = discord.Embed(
             title=f"Order #{self.order['order_id']} Refunded",
             description=(
@@ -140,7 +139,6 @@ class RefundConfirmView(discord.ui.View):
 
     @discord.ui.button(label="No, keep order", style=discord.ButtonStyle.secondary)
     async def no_refund(self, inner: discord.Interaction, button: discord.ui.Button):
-        # 🔥 UPDATED: Also converted to embed
         cancel_embed = discord.Embed(
             title="Refund Cancelled",
             description="No changes were made to the order.",
@@ -151,7 +149,6 @@ class RefundConfirmView(discord.ui.View):
             embed=cancel_embed,
             view=None
         )
-
 
 
 # =====================================================================
@@ -348,7 +345,6 @@ class ManageOrdersView(discord.ui.View):
     def build_embed_for_order(self, order: dict) -> discord.Embed:
         mode = self.mode
 
-        # Correct display label
         display_mode = (
             "Awaiting Shipment" if mode == "awaiting"
             else mode.capitalize()
@@ -376,7 +372,6 @@ class ManageOrdersView(discord.ui.View):
             ),
             inline=False
         )
-
         if mode in ("shipped", "unpaid", "awaiting", "delivered"):
             embed.add_field(
                 name="Financials",
@@ -442,189 +437,19 @@ class ManageOrdersView(discord.ui.View):
             )
 
         elif mode == "cancelled":
+            reason = order.get("cancelled_reason") or "None"
+            total = order.get("total", 0)
+
+            if reason.lower() == "refunded":
+                amount_label = "Refunded Amount"
+            else:
+                amount_label = "Amount"
+
             embed.add_field(
                 name="Cancellation",
                 value=(
-                    f"Cancelled Reason: {order['cancelled_reason'] or 'None'}\n"
-                ),
-                inline=False
-            )
-
-        embed.add_field(
-            name="Items",
-            value=items_text,
-            inline=False
-        )
-
-        return embed
-
-    # -----------------------------------------------------------------
-    # UPDATE VIEW (RESTORED)
-    # -----------------------------------------------------------------
-    async def update(self, interaction: discord.Interaction):
-        if self.mode == "shipped":
-            self.pages = self.shipped_orders
-        elif self.mode == "unpaid":
-            self.pages = self.unpaid_orders
-        elif self.mode == "awaiting":
-            self.pages = self.awaiting_orders
-        elif self.mode == "delivered":
-            self.pages = self.delivered_orders
-        else:
-            self.pages = self.cancelled_orders
-
-        if not self.pages:
-            display_mode = (
-                "Awaiting Shipment" if self.mode == "awaiting"
-                else self.mode.capitalize()
-            )
-            embed = discord.Embed(
-                title=f"Manage Orders — {display_mode}",
-                description=f"No {display_mode.lower()} orders found.",
-                color=discord.Color.blue()
-            )
-
-            await interaction.response.edit_message(embed=embed, view=self)
-            return
-
-        if self.page >= len(self.pages):
-            self.page = 0
-
-        order = self.pages[self.page]
-        embed = self.build_embed_for_order(order)
-        self.add_buttons_for_order(order)
-
-        await interaction.response.edit_message(embed=embed, view=self)
-
-    # -----------------------------------------------------------------
-    # BUTTON MANAGEMENT
-    # -----------------------------------------------------------------
-    def clear_action_buttons(self):
-        for child in list(self.children):
-            if isinstance(child, discord.ui.Button) and child.custom_id in (
-                "mark_delivered",
-                "issue_refund",
-                "add_tracking",
-                "mark_paid",
-                "mark_shipped",
-                "cancel_order_admin",
-            ):
-                self.remove_item(child)
-
-    def add_buttons_for_order(self, order: dict):
-        self.clear_action_buttons()
-
-        mode = self.mode
-
-        if mode == "shipped":
-            self.add_item(MarkDeliveredButton(order))
-            self.add_item(IssueRefundButton(order))
-            self.add_item(AddTrackingButton(order))
-
-        elif mode == "unpaid":
-            self.add_item(MarkPaidButton(order))
-            self.add_item(MarkShippedButton(order))
-            self.add_item(AddTrackingButton(order))
-            self.add_item(CancelOrderButton(order))
-
-        elif mode == "awaiting":
-            self.add_item(MarkShippedButton(order))
-            self.add_item(AddTrackingButton(order))
-            self.add_item(IssueRefundButton(order))
-
-        elif mode == "delivered":
-            self.add_item(IssueRefundButton(order))
-        # cancelled: no buttons
-
-
-
-        user_mention = format_user_mention(order["user_id"])
-        items_text = format_items_list(order["items"])
-
-        buyer_name = order.get("buyer_name") or "Not Provided"
-        shipping_address = order.get("shipping_address") or "Not Provided"
-
-        embed.add_field(
-            name="Order",
-            value=(
-                f"**Order ID:** {order['order_id']}\n"
-                f"**Buyer:** {user_mention}\n"
-                f"**Buyer Name:** {buyer_name}\n"
-                f"**Shipping Address:** {shipping_address}\n"
-                f"**Status:** {order['order_status']}\n"
-            ),
-            inline=False
-        )
-
-        if mode in ("shipped", "unpaid", "awaiting", "delivered"):
-            embed.add_field(
-                name="Financials",
-                value=(
-                    f"Subtotal: ${order['subtotal']:.2f}\n"
-                    f"Tax: ${order['tax']:.2f}\n"
-                    f"Fee: ${order['fee']:.2f}\n"
-                    f"Shipping Fee: ${order['shipping_fee']:.2f}\n"
-                    f"Total: ${order['total']:.2f}\n"
-                ),
-                inline=False
-            )
-
-        if mode == "awaiting":
-            embed.add_field(
-                name="Shipping",
-                value=(
-                    f"Shipping Method: {order['shipping_method']}\n"
-                    f"Created At: {order['created_at']}\n"
-                    f"Date Paid: {order['date_paid']}\n"
-                    f"Payment Method: {order['payment_method']}\n"
-                ),
-                inline=False
-            )
-
-        elif mode == "unpaid":
-            embed.add_field(
-                name="Order Timing",
-                value=f"Created At: {order['created_at']}\n",
-                inline=False
-            )
-
-        elif mode == "shipped":
-            embed.add_field(
-                name="Shipping",
-                value=(
-                    f"Shipping Method: {order['shipping_method']}\n"
-                    f"Tracking #: {order['tracking_number'] or 'None'}\n"
-                    f"Created At: {order['created_at']}\n"
-                    f"Date Paid: {order['date_paid']}\n"
-                    f"Estimated Delivery: {order['estimated_delivery']}\n"
-                    f"Date Shipped: {order['date_shipped']}\n"
-                    f"Reported Missing: {order['reported_missing']}\n"
-                    f"Payment Method: {order['payment_method']}\n"
-                ),
-                inline=False
-            )
-
-        elif mode == "delivered":
-            embed.add_field(
-                name="Shipping",
-                value=(
-                    f"Shipping Method: {order['shipping_method']}\n"
-                    f"Tracking #: {order['tracking_number'] or 'None'}\n"
-                    f"Created At: {order['created_at']}\n"
-                    f"Payment Method: {order['payment_method']}\n"
-                    f"Date Paid: {order['date_paid']}\n"
-                    f"Estimated Delivery: {order['estimated_delivery']}\n"
-                    f"Date Shipped: {order['date_shipped']}\n"
-                    f"Date Received: {order['date_received']}\n"
-                ),
-                inline=False
-            )
-
-        elif mode == "cancelled":
-            embed.add_field(
-                name="Cancellation",
-                value=(
-                    f"Cancelled Reason: {order['cancelled_reason'] or 'None'}\n"
+                    f"Cancelled Reason: {reason}\n"
+                    f"{amount_label}: ${total:.2f}\n"
                 ),
                 inline=False
             )
@@ -673,6 +498,7 @@ class ManageOrdersView(discord.ui.View):
         self.add_buttons_for_order(order)
 
         await interaction.response.edit_message(embed=embed, view=self)
+
     # -----------------------------------------------------------------
     # BUTTON MANAGEMENT
     # -----------------------------------------------------------------
@@ -685,6 +511,8 @@ class ManageOrdersView(discord.ui.View):
                 "mark_paid",
                 "mark_shipped",
                 "cancel_order_admin",
+                "next_order",
+                "previous_order",
             ):
                 self.remove_item(child)
 
@@ -712,11 +540,93 @@ class ManageOrdersView(discord.ui.View):
         elif mode == "delivered":
             self.add_item(IssueRefundButton(order))
         # cancelled: no buttons
+
+        # -----------------------------------------------------------------
+        # PAGINATION BUTTONS (NEW)
+        # -----------------------------------------------------------------
+        next_btn = NextOrderButton(self)
+        prev_btn = PreviousOrderButton(self)
+
+        if len(self.pages) <= 1:
+            next_btn.disabled = True
+            prev_btn.disabled = True
+        else:
+            prev_btn.disabled = (self.page == 0)
+            next_btn.disabled = (self.page == len(self.pages) - 1)
+
+        self.add_item(prev_btn)
+        self.add_item(next_btn)
+
+
+# -----------------------------------------------------------------
+# PAGINATION BUTTON CLASSES (NEW)
+# -----------------------------------------------------------------
+class NextOrderButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Next",
+            style=discord.ButtonStyle.primary,
+            custom_id="next_order",
+            row=3
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.parent_view.page < len(self.parent_view.pages) - 1:
+            self.parent_view.page += 1
+        await self.parent_view.update(interaction)
+
+
+class PreviousOrderButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Previous",
+            style=discord.ButtonStyle.secondary,
+            custom_id="previous_order",
+            row=3
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.parent_view.page > 0:
+            self.parent_view.page -= 1
+        await self.parent_view.update(interaction)
 
 
 # =====================================================================
 # ACTION BUTTON CLASSES
 # =====================================================================
+class NextOrderButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Next",
+            style=discord.ButtonStyle.primary,
+            custom_id="next_order",
+            row=3
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.parent_view.page < len(self.parent_view.pages) - 1:
+            self.parent_view.page += 1
+        await self.parent_view.update(interaction)
+
+
+class PreviousOrderButton(discord.ui.Button):
+    def __init__(self, parent_view):
+        super().__init__(
+            label="Previous",
+            style=discord.ButtonStyle.secondary,
+            custom_id="previous_order",
+            row=3
+        )
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        if self.parent_view.page > 0:
+            self.parent_view.page -= 1
+        await self.parent_view.update(interaction)
+
 class MarkDeliveredButton(discord.ui.Button):
     def __init__(self, order: dict):
         super().__init__(
@@ -950,4 +860,3 @@ async def start_manage_orders(interaction: discord.Interaction):
         view=view,
         ephemeral=True
     )
-

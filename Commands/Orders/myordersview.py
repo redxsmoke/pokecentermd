@@ -773,21 +773,23 @@ class MyOrdersView(discord.ui.View):
         self.bot = bot
         self.user_id = user_id
         self.active_orders = active_orders
-        self.delivered_orders = delivered_orders
+
+        # ⭐ Filter delivered orders to last 60 days
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=60)
+        self.delivered_orders = [
+            o for o in delivered_orders
+            if o["created_at"] >= cutoff
+        ]
+
         self.admin_id = admin_id
 
-        # Force default to ACTIVE mode
-        self.mode = "active"
+        # Force default to NO MODE SELECTED
+        self.mode = None
         self.page = 0
+        self.pages = []
 
-        # Current pages always derived from mode
-        self.pages = self.active_orders
-
-        # Dropdown (row 1)
+        # Dropdown only at start
         self.add_item(self.OrderTabDropdown(self))
-
-        # Buyer buttons (row 2)
-        self.add_buyer_buttons()
 
     # -----------------------------------------------------------------
     # DROPDOWN SELECTOR
@@ -804,7 +806,7 @@ class MyOrdersView(discord.ui.View):
                 ),
                 discord.SelectOption(
                     label="Delivered Orders",
-                    description="View all delivered orders",
+                    description="View delivered orders from the past 60 days",
                     value="delivered"
                 )
             ]
@@ -819,14 +821,8 @@ class MyOrdersView(discord.ui.View):
 
         async def callback(self, interaction):
             choice = self.values[0]
-
-            if choice == "active":
-                self.parent_view.mode = "active"
-                self.parent_view.page = 0
-            else:
-                self.parent_view.mode = "delivered"
-                self.parent_view.page = 0
-
+            self.parent_view.mode = choice
+            self.parent_view.page = 0
             await self.parent_view.update(interaction)
 
     # -----------------------------------------------------------------
@@ -836,20 +832,24 @@ class MyOrdersView(discord.ui.View):
         new_active = []
         new_delivered = []
 
+        cutoff = datetime.datetime.utcnow() - datetime.timedelta(days=60)
+
         for order in self.active_orders + self.delivered_orders:
             if order["order_status"] == "Delivered":
-                new_delivered.append(order)
+                if order["created_at"] >= cutoff:
+                    new_delivered.append(order)
             else:
                 new_active.append(order)
 
         self.active_orders = new_active
         self.delivered_orders = new_delivered
 
-        # Re-derive pages from mode
         if self.mode == "active":
             self.pages = self.active_orders
-        else:
+        elif self.mode == "delivered":
             self.pages = self.delivered_orders
+        else:
+            self.pages = []
 
         if self.page >= len(self.pages):
             self.page = 0
@@ -858,31 +858,24 @@ class MyOrdersView(discord.ui.View):
     # BUYER BUTTON LOGIC
     # -----------------------------------------------------------------
     def add_buyer_buttons(self):
-        # Remove existing buyer buttons
         for child in list(self.children):
             if isinstance(child, (MarkReceivedButton, MarkNotReceivedButton, PayButton)):
                 self.remove_item(child)
 
-        # Only show buttons on active tab
         if self.mode != "active":
             return
-
-        self.pages = self.active_orders
 
         if not self.pages:
             return
 
         order = self.pages[self.page]
 
-        # Pay button first — only if unpaid and not cancelled
         if order.get("date_paid") is None and order["order_status"] != "Cancelled":
             self.add_item(PayButton(self))
 
-        # If delivered, no received/not received buttons
         if order["order_status"] == "Delivered":
             return
 
-        # Then Mark Received / Mark Not Received
         self.add_item(MarkReceivedButton(self))
         self.add_item(MarkNotReceivedButton(self))
 
@@ -890,6 +883,22 @@ class MyOrdersView(discord.ui.View):
     # UPDATE VIEW
     # -----------------------------------------------------------------
     async def update(self, interaction):
+
+        # ⭐ REQUIRED FIX — user MUST select a category first
+        if self.mode is None:
+            embed = discord.Embed(
+                title="Select Order Category",
+                description="Please choose **Active Orders** or **Delivered Orders**.",
+                color=discord.Color.blue()
+            )
+
+            for child in list(self.children):
+                if not isinstance(child, self.OrderTabDropdown):
+                    self.remove_item(child)
+
+            await interaction.response.edit_message(embed=embed, view=self)
+            return
+
         # Always derive pages from mode
         if self.mode == "active":
             self.pages = self.active_orders
@@ -901,15 +910,20 @@ class MyOrdersView(discord.ui.View):
             if self.mode == "active":
                 embed = discord.Embed(
                     title="Active Orders",
-                    description="You don't currently have any active orders. Use /shop to place an order.",
+                    description="You don't currently have any active orders.",
                     color=discord.Color.blue()
                 )
             else:
                 embed = discord.Embed(
                     title="Delivered Orders",
-                    description="You don't have any delivered orders yet.",
+                    description="You have no delivered orders in the past 60 days.",
                     color=discord.Color.blue()
                 )
+                embed.set_footer(text="Only orders from the past 60 days are shown.")
+
+            for child in list(self.children):
+                if not isinstance(child, self.OrderTabDropdown):
+                    self.remove_item(child)
 
             await interaction.response.edit_message(embed=embed, view=self)
             return
@@ -925,39 +939,58 @@ class MyOrdersView(discord.ui.View):
             self.mode
         )
 
-        if self.mode == "active":
-            embed.set_footer(text="Only active orders (orders that have not been delivered) are displayed.")
+        # ⭐ Add footer for delivered orders
+        if self.mode == "delivered":
+            embed.set_footer(text="Only orders from the past 60 days are shown.")
         else:
-            embed.set_footer(text="Delivered orders are shown here.")
+            embed.set_footer(text="Only active orders are displayed.")
 
         self.add_buyer_buttons()
+        self.add_pagination_buttons()
 
         await interaction.response.edit_message(embed=embed, view=self)
 
     # -----------------------------------------------------------------
-    # PAGINATION BUTTONS
+    # PAGINATION BUTTONS (DYNAMIC)
     # -----------------------------------------------------------------
-    @discord.ui.button(label="⬅ Previous", style=discord.ButtonStyle.primary, row=0)
-    async def previous(self, interaction, button):
-        if self.mode == "active":
-            self.pages = self.active_orders
-        else:
-            self.pages = self.delivered_orders
+    def add_pagination_buttons(self):
 
-        if self.page > 0:
-            self.page -= 1
-        await self.update(interaction)
+        for child in list(self.children):
+            if isinstance(child, discord.ui.Button) and child.custom_id in ("previous", "next"):
+                self.remove_item(child)
 
-    @discord.ui.button(label="Next ➡", style=discord.ButtonStyle.primary, row=0)
-    async def next(self, interaction, button):
-        if self.mode == "active":
-            self.pages = self.active_orders
-        else:
-            self.pages = self.delivered_orders
+        prev = discord.ui.Button(
+            label="Previous",
+            style=discord.ButtonStyle.primary,
+            custom_id="previous",
+            row=0
+        )
+        next = discord.ui.Button(
+            label="Next",
+            style=discord.ButtonStyle.primary,
+            custom_id="next",
+            row=0
+        )
 
-        if self.page < len(self.pages) - 1:
-            self.page += 1
-        await self.update(interaction)
+        async def prev_callback(interaction):
+            if self.page > 0:
+                self.page -= 1
+            await self.update(interaction)
+
+        async def next_callback(interaction):
+            if self.page < len(self.pages) - 1:
+                self.page += 1
+            await self.update(interaction)
+
+        prev.callback = prev_callback
+        next.callback = next_callback
+
+        prev.disabled = (self.page == 0 or len(self.pages) <= 1)
+        next.disabled = (self.page >= len(self.pages) - 1 or len(self.pages) <= 1)
+
+        self.add_item(prev)
+        self.add_item(next)
+
 
 
 async def setup(bot):
