@@ -36,10 +36,9 @@ class WishlistWizardView(ui.View):
             color=discord.Color.blurple()
         )
 
-        msg = await interaction.channel.send(embed=embed, view=self)
-        self.message = msg
-
-        await interaction.response.defer(ephemeral=True)
+        # Fully ephemeral wizard start
+        await interaction.response.send_message(embed=embed, view=self, ephemeral=True)
+        self.message = await interaction.original_response()
 
     async def update(self):
         self.clear_items()
@@ -123,11 +122,11 @@ class WishlistWizardView(ui.View):
     @ui.button(label="Back", style=discord.ButtonStyle.secondary)
     async def back_button(self, interaction: discord.Interaction, button: ui.Button):
         if self.step == WishlistStep.MODAL:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
 
         self.step -= 1
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.update()
 
     @ui.button(label="Next", style=discord.ButtonStyle.primary)
@@ -138,20 +137,20 @@ class WishlistWizardView(ui.View):
 
         if self.step == WishlistStep.CONDITION:
             self.step = WishlistStep.SERIES_PROMPT
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             await self.update()
             return
 
         if self.step == WishlistStep.SERIES_PROMPT:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
 
         if self.step == WishlistStep.SERIES:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
 
         if self.step == WishlistStep.SET:
-            await interaction.response.defer()
+            await interaction.response.defer(ephemeral=True)
             return
 
         if self.step == WishlistStep.CONFIRM:
@@ -161,7 +160,6 @@ class WishlistWizardView(ui.View):
     @ui.button(label="Finish", style=discord.ButtonStyle.success, disabled=True)
     async def finish_button(self, interaction: discord.Interaction, button: ui.Button):
         await self.finish(interaction)
-
     async def add_series_dropdown(self):
         async with self.bot.db.acquire() as conn:
             rows = await conn.fetch(
@@ -272,7 +270,7 @@ class WishlistModal(ui.Modal, title="Wishlist Filters"):
                 return
 
         self.wizard.step = WishlistStep.CONDITION
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
 
 class ConditionSelect(ui.Select):
@@ -295,7 +293,7 @@ class ConditionSelect(ui.Select):
 
         self.wizard.step = WishlistStep.SERIES_PROMPT
 
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
 
 class SeriesPromptYes(ui.Button):
@@ -305,7 +303,7 @@ class SeriesPromptYes(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         self.wizard.step = WishlistStep.SERIES
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
 
 class SeriesPromptNo(ui.Button):
@@ -315,7 +313,7 @@ class SeriesPromptNo(ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         self.wizard.step = WishlistStep.CONFIRM
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
 
 class SeriesSelect(ui.Select):
@@ -326,7 +324,7 @@ class SeriesSelect(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         self.wizard.state["series"] = self.values[0]
         self.wizard.step = WishlistStep.SET
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
 
 class SetSelect(ui.Select):
@@ -337,9 +335,8 @@ class SetSelect(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         self.wizard.state["set_name"] = self.values[0]
         self.wizard.step = WishlistStep.CONFIRM
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
-
 class Wishlist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -413,6 +410,10 @@ class Wishlist(commands.Cog):
 
             if row["series"]:
                 parts.append(f"★ Series: {row['series']}")
+
+            # NEW — Notes always last
+            if row["notes"]:
+                parts.append(f"★ Notes: {row['notes']}")
 
             body = "```text\n" + "\n".join(parts) + "\n```"
 
@@ -541,3 +542,5 @@ class Wishlist(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Wishlist(bot))
+
+

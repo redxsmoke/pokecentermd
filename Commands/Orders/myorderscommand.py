@@ -10,12 +10,10 @@ from .myordersview import (
 )
 
 
-
 class MyOrders(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-   
     async def get_payment_settings(self, guild_id):
         async with self.bot.db.acquire() as conn:
             row = await conn.fetchrow(
@@ -48,7 +46,6 @@ class MyOrders(commands.Cog):
             )
         return rows
 
-
     def build_order_embed(self, order, page, total_pages, mode):
         embed = discord.Embed(
             title=f"My Orders — Page {page}/{total_pages}",
@@ -62,7 +59,6 @@ class MyOrders(commands.Cog):
                 f"**Status:** {order['order_status']}\n"
                 f"**Total:** ${order['total']:.2f}\n"
                 f"**Created:** {order['created_at'].date()}\n"
-
             ),
             inline=False
         )
@@ -73,7 +69,6 @@ class MyOrders(commands.Cog):
 
         if "plain white envelope" in shipping_method:
             tracking_display = "Shipped without tracking"
-
         else:
             if tracking_number is None:
                 if status != "Shipped":
@@ -171,8 +166,8 @@ class MyOrders(commands.Cog):
                 total,
                 payment_method,
                 shipping_method,
-                name,       # buyer_name
-                address     # shipping_address
+                name,
+                address
             )
 
             order_id = row["order_id"]
@@ -285,26 +280,20 @@ class MyOrders(commands.Cog):
             if o["order_status"] in ("Delivered", "Cancelled")
         ]
 
-        mode = "active" if active_orders else "archived"
-        pages = active_orders if mode == "active" else archived_orders
-
-        embed = self.build_order_embed(
-            pages[0],
-            1,
-            len(pages),
-            mode
-        )
-
         view = MyOrdersView(
             self.bot,
             user_id,
             active_orders,
             archived_orders,
-            mode,
+            None,   
             admin_id
         )
 
-        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+        await interaction.response.send_message(
+            content="Please select **Active Orders** or **Delivered Orders**.",
+            view=view,
+            ephemeral=True
+        )
 
 
 async def setup(bot):

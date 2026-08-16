@@ -43,7 +43,8 @@ class MyBot(commands.Bot):
             "Commands.SellCards.sellcards",
             "Commands.BuyingGuide.buyingguide",
             "Commands.UpcomingShows.upcomingshows",
-            "Commands.wishlist.mywishlist" 
+            "Commands.BotSettings.releasenotesannouncement",
+            "Commands.wishlist.mywishlist"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
