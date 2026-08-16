@@ -25,14 +25,14 @@ class ReleaseNotes(commands.Cog):
         if not send_flag:
             return None
 
-        # VERSION — FIRST NON-EMPTY LINE AFTER SEND FLAG
+        # VERSION: find line starting with "Version:"
         version = ""
-        for line in lines[1:]:
-            if line.strip():
-                version = line.strip()
+        for line in lines:
+            if line.startswith("Version:"):
+                version = line.split(":", 1)[1].strip()
                 break
 
-        # SECTION TITLES (ORIGINAL FORMAT)
+        # SECTION TITLES
         TITLE_MAP = {
             "What's New": "whats_new",
             "New Commands": "commands",
@@ -41,14 +41,7 @@ class ReleaseNotes(commands.Cog):
             "Upcoming Features": "features"
         }
 
-        sections = {
-            "whats_new": "",
-            "commands": "",
-            "how_to": "",
-            "additional": "",
-            "features": ""
-        }
-
+        sections = {key: "" for key in TITLE_MAP.values()}
         current = None
 
         # PARSE CONTENT
@@ -89,12 +82,12 @@ class ReleaseNotes(commands.Cog):
             return
 
         embed = discord.Embed(
-            title=notes["version"],  
+            title=f"Version {notes['version']} Released!",
             description="Latest release notes",
             color=GREEN
         )
 
-        # SECTIONS — EXACT ORIGINAL FORMAT
+        # SECTIONS
         if notes["whats_new"].strip():
             embed.add_field(name="What's New", value=notes["whats_new"], inline=False)
 
@@ -112,7 +105,11 @@ class ReleaseNotes(commands.Cog):
 
         channel = await self.get_announcement_channel(guild)
         if channel:
-            await channel.send(embed=embed)
+   
+            await channel.send(
+                content=f"@everyone Version {notes['version']} has been released!",
+                embed=embed
+            )
 
     async def startup_send_release_notes(self):
         await self.bot.wait_until_ready()
