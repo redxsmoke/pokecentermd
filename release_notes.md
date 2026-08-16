@@ -1,4 +1,4 @@
-send: false
+send: true
 
 Version 1.2 has been released!
 
