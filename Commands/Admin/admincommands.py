@@ -7,6 +7,7 @@ from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 
 from Commands.BotSettings.admin_channel import set_admin_channel
 from Commands.BotSettings.welcome_channel import set_welcome_channel
+from Commands.BotSettings.announcement_channel import set_announcement_channel
 from Commands.BotSettings.payment_settings import set_payment_info
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
@@ -105,6 +106,13 @@ class AdminCommands(commands.Cog):
             callback=set_welcome_channel
         )
 
+        announcement_channel_cmd = discord.app_commands.Command(
+            name="set_announcement_channel",
+            description="Configure the announcement channel for release notes and bot updates.",
+            callback=set_announcement_channel
+        )
+
+
         payment_settings_cmd = discord.app_commands.Command(
             name="set_payment_info",
             description="Configure payment methods (Venmo, CashApp, PayPal).",
@@ -134,6 +142,7 @@ class AdminCommands(commands.Cog):
         self.admin_group.add_command(delete_single_cmd)
         self.admin_group.add_command(set_admin_channel_cmd)
         self.admin_group.add_command(welcome_channel_cmd)
+        self.admin_group.add_command(announcement_channel_cmd)
         self.admin_group.add_command(payment_settings_cmd)
 
         # ✅ NEW — register batch upload
