@@ -40,7 +40,7 @@ class ShowWizardSession:
 class ShowDetailsModal(discord.ui.Modal, title="Add Show — Step 1"):
     show_name = discord.ui.TextInput(
         label="Show Name",
-        placeholder="Example: Baltimore Card Expo",
+        placeholder="Example: TCG Card Expo",
         required=True
     )
     date = discord.ui.TextInput(
@@ -77,19 +77,19 @@ class ShowDetailsModal(discord.ui.Modal, title="Add Show — Step 1"):
 class AddressModal(discord.ui.Modal, title="Add Show — Step 2"):
     address = discord.ui.TextInput(
         label="Address",
-        placeholder="Example: 17301 Valley Mall Road",
+        placeholder="Example: 123 Main Street",
         required=True
     )
 
     city = discord.ui.TextInput(
         label="City",
-        placeholder="Example: Hagerstown",
+        placeholder="Example: City",
         required=True
     )
 
     state = discord.ui.TextInput(
         label="State",
-        placeholder="Example: MD",
+        placeholder="Example: State or State Abbreviation",
         required=True
     )
 
@@ -204,8 +204,6 @@ class FlyerStepView(discord.ui.View):
             view=PreviewView(self.cog, self.session),
             ephemeral=True
         )
-
-
 # ============================================================
 #   EDIT FIELD SELECT + MODAL
 # ============================================================
@@ -219,6 +217,7 @@ class EditFieldSelect(discord.ui.Select):
             discord.SelectOption(label="Date", value="date"),
             discord.SelectOption(label="Time", value="time"),
             discord.SelectOption(label="Address", value="address"),
+            discord.SelectOption(label="City", value="city"),  # ⭐ ADDED
             discord.SelectOption(label="State", value="state"),
             discord.SelectOption(label="Zip Code", value="zipcode"),
             discord.SelectOption(label="Flyer", value="flyer"),
@@ -339,9 +338,9 @@ class PreviewView(discord.ui.View):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button):
 
-        # ⭐ NEW: Editing mode
+        # ⭐ Editing mode
         if self.session.editing_show_id:
-            await self.cog.update_show_in_db(self.session)
+            await self.cog.update_show_into_db(self.session, interaction)
             await interaction.response.edit_message(
                 content="✅ Show updated successfully.",
                 embed=None,
@@ -350,8 +349,8 @@ class PreviewView(discord.ui.View):
             self.cog.end_session(self.session.user_id)
             return
 
-        # ⭐ Existing add mode (unchanged)
-        await self.cog.insert_show_into_db(self.session)
+        # ⭐ Add mode (unchanged)
+        await self.cog.insert_show_into_db(self.session, interaction)
         await interaction.response.edit_message(
             content="✅ Show added successfully.",
             embed=None,
@@ -447,6 +446,68 @@ class EditShowSelectView(discord.ui.View):
 
 
 # ============================================================
+#   PAGINATION VIEW — 6 SHOWS PER PAGE
+# ============================================================
+class UpcomingShowsPagination(discord.ui.View):
+    def __init__(self, cog, interaction, rows, page=0):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.interaction = interaction
+        self.rows = rows
+        self.page = page
+        self.per_page = 6
+
+        total_pages = (len(rows) - 1) // self.per_page + 1
+
+        self.prev_button.disabled = (page == 0)
+        self.next_button.disabled = (page >= total_pages - 1)
+
+        if total_pages == 1:
+            self.prev_button.disabled = True
+            self.next_button.disabled = True
+
+    def get_page_embeds(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        chunk = self.rows[start:end]
+
+        embeds = []
+        for r in chunk:
+            embed = discord.Embed(
+                title=r["show_name"],
+                color=discord.Color.gold()
+            )
+            if r["flyer_url"]:
+                embed.set_thumbnail(url=r["flyer_url"])
+
+            embed.description = (
+                f"★ **Date:** {r['date']}\n"
+                f"★ **Time:** {r['time']}\n"
+                f"★ **Address:** {r['address']}, {r['city']}, {r['state']} {r['zipcode']}\n"
+            )
+            embed.set_footer(text=f"Show ID #{r['show_id']}")
+            embeds.append(embed)
+
+        return embeds
+
+    @discord.ui.button(label="Previous", style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button):
+        self.page -= 1
+        new_view = UpcomingShowsPagination(self.cog, interaction, self.rows, self.page)
+        await interaction.response.edit_message(
+            embeds=new_view.get_page_embeds(),
+            view=new_view
+        )
+
+    @discord.ui.button(label="Next", style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button):
+        self.page += 1
+        new_view = UpcomingShowsPagination(self.cog, interaction, self.rows, self.page)
+        await interaction.response.edit_message(
+            embeds=new_view.get_page_embeds(),
+            view=new_view
+        )
+# ============================================================
 #   MAIN COG
 # ============================================================
 class UpcomingShows(commands.Cog):
@@ -468,6 +529,25 @@ class UpcomingShows(commands.Cog):
     def end_session(self, user_id):
         self.sessions.pop(user_id, None)
 
+    # ---------------------------------------------------------
+    # DATE VALIDATION (OPTION C — Flexible Parsing)
+    # ---------------------------------------------------------
+    def validate_date(self, date_str):
+        from dateutil import parser
+
+        try:
+            parsed = parser.parse(date_str)
+            return parsed.date()
+        except Exception:
+            raise ValueError(
+                "❌ Invalid date format.\n\n"
+                "Try formats like:\n"
+                "• **August 23, 2026**\n"
+                "• **1/1/2028**\n"
+                "• **Jan 1 2028**\n"
+                "• **2028-01-01**"
+            )
+
     def build_preview_embed(self, session):
         embed = discord.Embed(
             title=session.show_name or "Upcoming Show",
@@ -485,15 +565,23 @@ class UpcomingShows(commands.Cog):
 
         return embed
 
-    async def insert_show_into_db(self, session):
-        from dateutil import parser
+    # ---------------------------------------------------------
+    # INSERT SHOW — NOW WITH EMBEDDED DATE ERROR
+    # ---------------------------------------------------------
+    async def insert_show_into_db(self, session, interaction):
 
         payload = session.to_db_payload()
 
         try:
-            parsed_date = parser.parse(payload["date"]).date()
-        except Exception:
-            raise ValueError("Invalid date format. Please enter a valid date.")
+            parsed_date = self.validate_date(payload["date"])
+        except ValueError as e:
+            embed = discord.Embed(
+                title="❌ Invalid Date Format",
+                description=str(e),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
 
         query = """
             INSERT INTO upcoming_shows (show_name, date, time, address, city, state, zipcode, is_active, flyer_url)
@@ -622,7 +710,7 @@ class UpcomingShows(commands.Cog):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # ---------------------------------------------------------
-    # /adminshows editshow — NEW MONTH → SHOW DROPDOWN WORKFLOW
+    # /adminshows editshow — MONTH → SHOW DROPDOWN WORKFLOW
     # ---------------------------------------------------------
     async def editshow(self, interaction: discord.Interaction):
         await interaction.response.send_message(
@@ -660,7 +748,7 @@ class UpcomingShows(commands.Cog):
         )
 
     # ---------------------------------------------------------
-    # LOAD EDIT SESSION (⭐ FIXED — now shows PreviewView)
+    # LOAD EDIT SESSION — SHOW PREVIEWVIEW (NOT WIZARD)
     # ---------------------------------------------------------
     async def load_edit_session(self, interaction, show_id):
         async with self.bot.db.acquire() as conn:
@@ -701,17 +789,22 @@ class UpcomingShows(commands.Cog):
         )
 
     # ---------------------------------------------------------
-    # DB UPDATE FOR EDITING EXISTING SHOW
+    # UPDATE SHOW — NOW WITH EMBEDDED DATE ERROR
     # ---------------------------------------------------------
-    async def update_show_in_db(self, session):
-        from dateutil import parser
+    async def update_show_into_db(self, session, interaction):
 
         payload = session.to_db_payload()
 
         try:
-            parsed_date = parser.parse(payload["date"]).date()
-        except Exception:
-            raise ValueError("Invalid date format. Please enter a valid date.")
+            parsed_date = self.validate_date(payload["date"])
+        except ValueError as e:
+            embed = discord.Embed(
+                title="❌ Invalid Date Format",
+                description=str(e),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
 
         query = """
             UPDATE upcoming_shows
@@ -741,7 +834,7 @@ class UpcomingShows(commands.Cog):
             )
 
     # ---------------------------------------------------------
-    # /upcomingshows — SORT BY NEAREST DATE FIRST
+    # /upcomingshows — PAGINATION ENABLED
     # ---------------------------------------------------------
     @app_commands.command(name="upcomingshows", description="View upcoming shows.")
     async def upcomingshows(self, interaction: discord.Interaction):
@@ -775,28 +868,11 @@ class UpcomingShows(commands.Cog):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        embeds = []
-
-        for r in rows:
-            embed = discord.Embed(
-                title=r["show_name"],
-                color=discord.Color.gold()
-            )
-
-            if r["flyer_url"]:
-                embed.set_thumbnail(url=r["flyer_url"])
-
-            embed.description = (
-                f"★ **Date:** {r['date']}\n"
-                f"★ **Time:** {r['time']}\n"
-                f"★ **Address:** {r['address']}, {r['city']}, {r['state']} {r['zipcode']}\n"
-            )
-
-            embed.set_footer(text=f"Show ID #{r['show_id']}")
-            embeds.append(embed)
+        view = UpcomingShowsPagination(self, interaction, rows, page=0)
 
         await interaction.response.send_message(
-            embeds=embeds,
+            embeds=view.get_page_embeds(),
+            view=view,
             ephemeral=True
         )
 
@@ -822,3 +898,4 @@ class StartWizardView(discord.ui.View):
 # ============================================================
 async def setup(bot):
     await bot.add_cog(UpcomingShows(bot))
+
