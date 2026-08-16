@@ -81,6 +81,20 @@ class Inventory(commands.Cog):
         pokemon_name: str = None,
         set_name: str = None
     ):
+
+        # ⭐ Prevent running inside DMs
+        if interaction.guild is None:
+            embed = discord.Embed(
+                title="Cannot Run in DMs",
+                description=(
+                    "❌ The **/shop** command must be used **inside a server**.\n\n"
+                    "Please run this command in the server where you want to browse the shop."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
         try:
             await interaction.response.defer(ephemeral=True)
         except Exception as e:
