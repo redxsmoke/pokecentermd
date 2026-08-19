@@ -220,10 +220,28 @@ class BatchImageConfirmView(discord.ui.View):
         self.bot = bot
         self.inventory_ids = inventory_ids
         self.image_urls = image_urls
-        self.uploaded_messages = uploaded_messages  # <--- STORE MESSAGES
+        self.uploaded_messages = uploaded_messages
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Acknowledge interaction FIRST
+        await interaction.response.defer()
+
+        # Disable buttons immediately
+        for child in self.children:
+            child.disabled = True
+
+        # Edit the message using FOLLOWUP (required after defer)
+        try:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                content="✅ Images saved successfully.",
+                view=None,
+                embeds=[]
+            )
+        except discord.NotFound:
+            pass
 
         # Save images to DB
         async with self.bot.db.acquire() as conn:
@@ -246,14 +264,26 @@ class BatchImageConfirmView(discord.ui.View):
             except:
                 pass
 
-        await interaction.response.edit_message(
-            content="✅ Images saved successfully.",
-            view=None,
-            embeds=[]
-        )
-
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Acknowledge interaction FIRST
+        await interaction.response.defer()
+
+        # Disable buttons immediately
+        for child in self.children:
+            child.disabled = True
+
+        # Edit the message using FOLLOWUP
+        try:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                content="❌ Batch image upload cancelled. No changes were saved.",
+                view=None,
+                embeds=[]
+            )
+        except discord.NotFound:
+            pass
 
         # Delete admin-channel messages
         for msg in self.uploaded_messages:
@@ -261,9 +291,3 @@ class BatchImageConfirmView(discord.ui.View):
                 await msg.delete()
             except:
                 pass
-
-        await interaction.response.edit_message(
-            content="❌ Batch image upload cancelled. No changes were saved.",
-            view=None,
-            embeds=[]
-        )
