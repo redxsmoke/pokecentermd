@@ -82,6 +82,13 @@ class InventoryCSVImport(commands.Cog):
                 variant = (row.get("Variant") or "").strip()
                 rarity = (row.get("Rarity") or "").strip()
 
+                note1 = (row.get("Note 1") or "").strip()
+                note2 = (row.get("Note 2") or "").strip()
+                note3 = (row.get("Note 3") or "").strip()
+                note4 = (row.get("Note 4") or "").strip()
+                note5 = (row.get("Note 5") or "").strip()
+
+
                 raw_id = (row.get("Id") or "").strip()
                 if raw_id and "-" in raw_id:
                     card_number = raw_id.split("-")[-1].strip()
@@ -159,12 +166,22 @@ class InventoryCSVImport(commands.Cog):
                         """
                         UPDATE inventory
                         SET quantity_available = $1,
-                            price = $2
-                        WHERE inventory_id = $3
-                          AND guild_id = $4
+                            price = $2,
+                            note1 = $3,
+                            note2 = $4,
+                            note3 = $5,
+                            note4 = $6,
+                            note5 = $7
+                        WHERE inventory_id = $8
+                          AND guild_id = $9
                         """,
                         quantity_available,
                         price,
+                        note1,
+                        note2,
+                        note3,
+                        note4,
+                        note5,
                         existing["inventory_id"],
                         guild_id
                     )
@@ -240,14 +257,16 @@ class InventoryCSVImport(commands.Cog):
                             csv_id, pokemon_name, series, set_name, card_number,
                             variant, rarity, price, graded, grading_company, grade,
                             quantity_available, image_link, condition,
-                            reserved, reserved_until, date_added
+                            reserved, reserved_until, date_added, 
+                            note1, note2, note3, note4, note5
                         )
                         VALUES (
                             $1,
                             $2,$3,$4,$5,$6,
                             $7,$8,$9,NULL,NULL,NULL,
                             $10,$11,'Near Mint',
-                            0,NULL,$12
+                            0,NULL,$12,
+                            $13, $14, $15, $16, $17
                         )
                         """,
                         guild_id,
@@ -261,7 +280,12 @@ class InventoryCSVImport(commands.Cog):
                         price,
                         quantity_available,
                         image_link,
-                        datetime.now().date()
+                        datetime.now().date(),
+                        note1,
+                        note2,
+                        note3,
+                        note4,
+                        note5
                     )
 
                     # ⭐ NOTIFY ON INSERT (unchanged)
