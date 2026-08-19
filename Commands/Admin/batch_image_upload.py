@@ -1,6 +1,5 @@
 import discord
 import asyncio
-from io import BytesIO
 
 # ---------------------------------------------------------
 # GET ADMIN CHANNEL (correct guild_settings query)
@@ -24,7 +23,7 @@ async def get_admin_channel(bot, guild_id: int):
 
 
 # ---------------------------------------------------------
-# /admin batch_image_upload  (FUNCTION-BASED CALLBACK)
+# /admin batch_image_upload
 # ---------------------------------------------------------
 async def batch_image_upload(interaction: discord.Interaction):
 
@@ -110,18 +109,9 @@ async def batch_image_upload(interaction: discord.Interaction):
     )
 
     # ---------------------------------------------------------
-    # 3. Collect 6 images one-by-one
+    # 3. Collect 6 images one-by-one (FIXED)
     # ---------------------------------------------------------
-    admin_channel = await get_admin_channel(interaction.client, interaction.guild.id)
-    if admin_channel is None:
-        await interaction.followup.send(
-            content="❌ Admin channel is not set. Use /bot_settings to configure it.",
-            ephemeral=True
-        )
-        return
-
     image_urls = []
-    uploaded_messages = []   # <--- TRACK ADMIN-CHANNEL MESSAGES
 
     for i in range(6):
         prompt = discord.Embed(
@@ -153,25 +143,14 @@ async def batch_image_upload(interaction: discord.Interaction):
             return
 
         attachment = msg.attachments[0]
-        file_bytes = await attachment.read()
-        file = discord.File(BytesIO(file_bytes), filename=f"batch_upload_{i+1}.jpg")
 
-        sent_msg = await admin_channel.send(file=file)
-        uploaded_messages.append(sent_msg)  # <--- STORE MESSAGE FOR LATER DELETION
+        # ⭐ FIX: Use original CDN URL — DO NOT re-upload
+        url = attachment.url
 
-        await asyncio.sleep(0.35)  # prevents Discord retry
-        url = sent_msg.attachments[0].url
-
-        if "?" in url:
-            url = url.split("?")[0]
+        # ⭐ DO NOT DELETE THE MESSAGE — deleting it deletes the CDN file
+        # (This was the cause of disappearing images)
 
         image_urls.append(url)
-
-        # Delete user message to keep channel clean
-        try:
-            await msg.delete()
-        except:
-            pass
 
         progress = discord.Embed(
             title="Image Received",
@@ -181,7 +160,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         await interaction.followup.send(embed=progress, ephemeral=True)
 
     # ---------------------------------------------------------
-    # 4. Build confirmation embeds
+    # 4. Build confirmation embeds (SAFE)
     # ---------------------------------------------------------
     confirm_embeds = []
     for row, url in zip(batch_rows, image_urls):
@@ -190,7 +169,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         title = f"{row['pokemon_name']} #{card_number} — {set_display}"
 
         embed = discord.Embed(title=title, color=discord.Color.green())
-        embed.set_thumbnail(url=url)
+        embed.set_thumbnail(url=url)  # SAFE — original CDN URL
         graded_text = "Yes" if row["graded"] else "No"
         embed.description = (
             "__**Card Details (Preview with Image)**__\n\n"
@@ -201,7 +180,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
         confirm_embeds.append(embed)
 
-    view = BatchImageConfirmView(interaction.client, inventory_ids, image_urls, uploaded_messages)
+    view = BatchImageConfirmView(interaction.client, inventory_ids, image_urls)
 
     await interaction.followup.send(
         content="Review the images below. Confirm to save or Cancel to discard.",
@@ -212,36 +191,23 @@ async def batch_image_upload(interaction: discord.Interaction):
 
 
 # ---------------------------------------------------------
-# CONFIRMATION VIEW
+# CONFIRMATION VIEW (UPDATED)
 # ---------------------------------------------------------
 class BatchImageConfirmView(discord.ui.View):
-    def __init__(self, bot, inventory_ids, image_urls, uploaded_messages):
+    def __init__(self, bot, inventory_ids, image_urls):
         super().__init__(timeout=300)
         self.bot = bot
         self.inventory_ids = inventory_ids
         self.image_urls = image_urls
-        self.uploaded_messages = uploaded_messages
 
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        # Acknowledge interaction FIRST
         await interaction.response.defer()
 
-        # Disable buttons immediately
+        # Disable buttons
         for child in self.children:
             child.disabled = True
-
-        # Edit the message using FOLLOWUP (required after defer)
-        try:
-            await interaction.followup.edit_message(
-                interaction.message.id,
-                content="✅ Images saved successfully.",
-                view=None,
-                embeds=[]
-            )
-        except discord.NotFound:
-            pass
 
         # Save images to DB
         async with self.bot.db.acquire() as conn:
@@ -257,24 +223,25 @@ class BatchImageConfirmView(discord.ui.View):
                     url
                 )
 
-        # Delete admin-channel messages
-        for msg in self.uploaded_messages:
-            try:
-                await msg.delete()
-            except:
-                pass
+        # Edit message
+        try:
+            await interaction.followup.edit_message(
+                interaction.message.id,
+                content="✅ Images saved successfully.",
+                view=None,
+                embeds=[]
+            )
+        except discord.NotFound:
+            pass
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
     async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
 
-        # Acknowledge interaction FIRST
         await interaction.response.defer()
 
-        # Disable buttons immediately
         for child in self.children:
             child.disabled = True
 
-        # Edit the message using FOLLOWUP
         try:
             await interaction.followup.edit_message(
                 interaction.message.id,
@@ -284,10 +251,3 @@ class BatchImageConfirmView(discord.ui.View):
             )
         except discord.NotFound:
             pass
-
-        # Delete admin-channel messages
-        for msg in self.uploaded_messages:
-            try:
-                await msg.delete()
-            except:
-                pass
