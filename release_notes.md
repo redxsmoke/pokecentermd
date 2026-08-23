@@ -1,4 +1,4 @@
-send: true
+send: false
 
 Version: 1.3
 
@@ -6,11 +6,11 @@ Version: 1.3
 
 What's New
 
-* ***New Badge system*** 
+* ***New Badge system***
 * ***New Pokémon Catch Game***
 * ***New command to view recently added cards***
 * ***Notifications for newly added singles (admin and user config)***
-* ***Grouping of admin commands*** 
+* ***Grouping of admin commands***
 * ***New singles configuration for admins***
 
 
@@ -56,6 +56,4 @@ Additional Info
 * Support for adding and filtering sealed products
 * Points, XP, and Levels system. Earn rewards, perks, and bonuses
 * /pokedex command - View the pokemon you've caught with the pokemon catch game, sort and filter by region
-
-
 

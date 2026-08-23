@@ -47,9 +47,9 @@ class MyBadges(commands.Cog):
             return await interaction.followup.send(embed=embed, ephemeral=True)
 
         for row in rows:
-            # Only show emoji if bot can render it in THIS guild
-            guild_emoji = interaction.guild.get_emoji(row["emoji_id"])
-            emoji = f"{guild_emoji}" if guild_emoji else ""
+
+            emoji = f"<:{row['emoji_name']}:{row['emoji_id']}>"
+
 
             badge_number = badge_numbers[row["badge_award_id"]]
 
