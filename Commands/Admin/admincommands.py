@@ -4,18 +4,14 @@ import shop_state
 
 from Commands.Admin.inventory_csv_import import InventoryCSVImport
 from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
-
-from Commands.BotSettings.admin_channel import set_admin_channel
-from Commands.BotSettings.welcome_channel import set_welcome_channel
-from Commands.BotSettings.announcement_channel import set_announcement_channel
-from Commands.BotSettings.payment_settings import set_payment_info
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
 
 
-# ✅ NEW — import your batch upload function
+# Batch upload
 from Commands.Admin.batch_image_upload import batch_image_upload
 
+# Inventory update/delete flows
 from Commands.Admin.inventory_update_single import (
     start_update_single_flow,
     start_update_single_flow_with_id
@@ -25,6 +21,15 @@ from Commands.Admin.inventory_delete_single import (
     start_delete_single_flow,
     start_delete_single_flow_with_id
 )
+
+ 
+from Commands.BotSettings.bot_settings_menu import BotSettingsMenu
+
+from Commands.BotSettings.set_singles_role_slash import (
+    set_singles_role_callback,
+    singles_role_autocomplete
+)
+
 
 
 class AdminCommands(commands.Cog):
@@ -39,6 +44,9 @@ class AdminCommands(commands.Cog):
 
     async def cog_load(self):
 
+        # -----------------------------
+        # Core admin commands
+        # -----------------------------
         closeshop_cmd = discord.app_commands.Command(
             name="closeshop",
             description="Close the shop with a selected reason.",
@@ -57,9 +65,6 @@ class AdminCommands(commands.Cog):
             callback=self.manage_inventory
         )
 
-        # ---------------------------------------------------------
-        # ✅ NEW — /admin manage_orders
-        # ---------------------------------------------------------
         manage_orders_cmd = discord.app_commands.Command(
             name="manage_orders",
             description="Manage orders by status.",
@@ -94,62 +99,56 @@ class AdminCommands(commands.Cog):
         )
         delete_single_cmd.autocomplete("card")(self.all_inventory_autocomplete)
 
-        set_admin_channel_cmd = discord.app_commands.Command(
-            name="set_admin_channel",
-            description="Configure bot admin settings.",
-            callback=set_admin_channel
+        set_singles_role_cmd = discord.app_commands.Command(
+            name="set_singles_role",
+            description="Set the Singles notification role (admin only).",
+            callback=set_singles_role_callback
+        )
+        set_singles_role_cmd.autocomplete("role")(singles_role_autocomplete)
+        self.admin_group.add_command(set_singles_role_cmd)
+
+        bot_settings_cmd = discord.app_commands.Command(
+            name="bot_settings",
+            description="Configure bot settings.",
+            callback=self.bot_settings
         )
 
-        welcome_channel_cmd = discord.app_commands.Command(
-            name="set_welcome_channel",
-            description="Configure the welcome channel for new user greetings.",
-            callback=set_welcome_channel
-        )
-
-        announcement_channel_cmd = discord.app_commands.Command(
-            name="set_announcement_channel",
-            description="Configure the announcement channel for release notes and bot updates.",
-            callback=set_announcement_channel
-        )
-
-
-        payment_settings_cmd = discord.app_commands.Command(
-            name="set_payment_info",
-            description="Configure payment methods (Venmo, CashApp, PayPal).",
-            callback=set_payment_info
-        )
-
-        # ✅ NEW — batch image upload command
+        # -----------------------------
+        # Batch upload
+        # -----------------------------
         batch_upload_cmd = discord.app_commands.Command(
             name="batch_image_upload",
             description="Batch upload images for cards missing images.",
             callback=batch_image_upload
         )
 
-        # Register all commands
+        # -----------------------------
+        # Register commands
+        # -----------------------------
         self.admin_group.add_command(closeshop_cmd)
         self.admin_group.add_command(openshop_cmd)
         self.admin_group.add_command(manage_inventory_cmd)
-
-        # ---------------------------------------------------------
-        # ✅ NEW — register manage_orders
-        # ---------------------------------------------------------
         self.admin_group.add_command(manage_orders_cmd)
-
         self.admin_group.add_command(update_single_cmd)
         self.admin_group.add_command(activate_single_cmd)
         self.admin_group.add_command(deactivate_single_cmd)
         self.admin_group.add_command(delete_single_cmd)
-        self.admin_group.add_command(set_admin_channel_cmd)
-        self.admin_group.add_command(welcome_channel_cmd)
-        self.admin_group.add_command(announcement_channel_cmd)
-        self.admin_group.add_command(payment_settings_cmd)
 
-        # ✅ NEW — register batch upload
+
+        # NEW — bot settings dropdown
+        self.admin_group.add_command(bot_settings_cmd)
+
+        # Batch upload
         self.admin_group.add_command(batch_upload_cmd)
 
         # Add group to bot
         self.bot.tree.add_command(self.admin_group)
+    # ---------------------------------------------------------
+    # BOT SETTINGS DROPDOWN HANDLER
+    # ---------------------------------------------------------
+    async def bot_settings(self, interaction: discord.Interaction):
+        menu = BotSettingsMenu(self.bot)
+        await menu.bot_settings(interaction)
 
     # ---------------------------------------------------------
     # AUTOCOMPLETE — ACTIVE CARDS ONLY
@@ -324,9 +323,9 @@ class AdminCommands(commands.Cog):
                         "**Warning — Permanent Deletion**\n\n"
                         "Deleting a card will permanently remove it and all of its data from your inventory.\n\n"
                         "If you simply no longer have this card and want it removed from search results, "
-                        "use **/admin deactivate_single** instead. This hides the card without deleting it.\n\n"
+                        "use **/admin deactivate_single** instead.\n\n"
                         "You may reactivate hidden cards at any time using **/admin activate_single**.\n\n"
-                        "**If you continue, the card will be permanently deleted. This action cannot be undone.**"
+                        "**This action cannot be undone.**"
                     )
 
                     class DeleteWarningView(discord.ui.View):
@@ -336,7 +335,7 @@ class AdminCommands(commands.Cog):
                         @discord.ui.button(label="Continue", style=discord.ButtonStyle.danger)
                         async def continue_delete(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
                             await btn_interaction.response.send_message(
-                                "To delete a card, run `/admin delete_single` and select the card using autocomplete.",
+                                "Run `/admin delete_single` and select the card using autocomplete.",
                                 ephemeral=True
                             )
 
@@ -364,9 +363,7 @@ class AdminCommands(commands.Cog):
                         async def search_by_name(self, btn_interaction: discord.Interaction, button: discord.ui.Button):
 
                             await btn_interaction.response.send_message(
-                                "To search for a card, please run the command:\n\n"
-                                "`/admin update_single`\n\n"
-                                "Then type the Pokémon name in the autocomplete box.",
+                                "Run `/admin update_single` and type the Pokémon name in the autocomplete box.",
                                 ephemeral=True
                             )
 
@@ -392,33 +389,22 @@ class AdminCommands(commands.Cog):
                         title="📄 CSV Upload Mode",
                         description=(
                             "Please upload your **CSV file** in this channel.\n\n"
-                            "**Supported formats:**\n"
+                            "Supported formats:\n"
                             "• UTF‑16 CSV\n"
                             "• UTF‑8 CSV\n"
                             "• Semicolon‑delimited CSV\n\n"
-                            "**Required column headers:**\n"
+                            "Required columns:\n"
                             "• Name\n"
                             "• Series\n"
                             "• Set\n"
                             "• Quantity\n"
                             "• Price\n\n"
-                            "**Optional column headers:**\n"
+                            "Optional columns:\n"
                             "• Variant\n"
                             "• Rarity\n"
                             "• Condition\n"
-                            "• ImageURL *(must be a direct image link ending in .jpg, .jpeg, .png, .gif, or .webp)*\n\n"
-                            "**ID Handling:**\n"
-                            "• You do **NOT** need to include an `Id` column.\n"
-                            "• The bot automatically assigns an ID based on the **CSV filename**.\n"
-                            "• All cards imported from the same CSV share this ID.\n\n"
-                            "**Inventory Display Rules:**\n"
-                            "• `/inventory` only displays cards where **Quantity ≥ 1**.\n"
-                            "• If you sell a card and want to keep the record, set **Quantity = 0**.\n"
-                            "• When you obtain a new copy, update Quantity back to **1** and your stored image will display again.\n\n"
-                            "**Image Notes:**\n"
-                            "• For images uploaded within Discord, **do NOT delete the message** containing the image.\n"
-                            "• If the message is deleted, the Discord CDN link breaks and the image will no longer display.\n\n"
-                            "Please upload your CSV file now."
+                            "• ImageURL (direct link ending in .jpg/.png/.gif/.webp)\n\n"
+                            "Upload your CSV file now."
                         ),
                         color=discord.Color.green()
                     )
@@ -553,6 +539,7 @@ class AdminCommands(commands.Cog):
         await start_manage_orders(interaction)
 
 
-
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))
+
+

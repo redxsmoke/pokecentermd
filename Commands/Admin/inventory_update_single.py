@@ -252,7 +252,8 @@ class UpdateFieldSelect(discord.ui.Select):
             await start_update_single_wizard(
                 interaction,
                 interaction.client,
-                self.card_row["inventory_id"]
+                self.card_row["inventory_id"],
+                self.card_row
             )
 
             return

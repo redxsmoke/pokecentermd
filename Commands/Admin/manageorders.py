@@ -718,6 +718,25 @@ class MarkPaidButton(discord.ui.Button):
         estimated_delivery = datetime.date.today() + datetime.timedelta(days=14)
 
         async with interaction.client.db.acquire() as conn:
+
+            # --- FETCH BUYER ID (FIX FOR KeyError) ---
+            user_id = await conn.fetchval(
+                """
+                SELECT user_id
+                FROM orders
+                WHERE order_id = $1
+                """,
+                self.order["order_id"]
+            )
+
+            if user_id is None:
+                await interaction.response.send_message(
+                    "❌ Could not find buyer for this order.",
+                    ephemeral=True
+                )
+                return
+
+            # --- UPDATE ORDER STATUS ---
             await conn.execute(
                 """
                 UPDATE orders
@@ -730,29 +749,87 @@ class MarkPaidButton(discord.ui.Button):
                 estimated_delivery
             )
 
-        try:
-            buyer = await interaction.client.fetch_user(self.order["user_id"])
-            await buyer.send(
-                embed=discord.Embed(
-                    title="Payment Confirmed",
-                    description=(
-                        f"Your payment for order #{self.order['order_id']} has been confirmed.\n"
-                        f"Estimated delivery: **{estimated_delivery.strftime('%Y-%m-%d')}**"
-                    ),
-                    color=discord.Color.green()
-                )
+            # --- FETCH BADGE INFO ---
+            badge_row = await conn.fetchrow(
+                """
+                SELECT badge_id, emoji_id, badge_url
+                FROM badges
+                WHERE name = 'Purchased Card'
+                LIMIT 1;
+                """
             )
-        except Exception:
-            pass
 
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Order Updated",
-                description=f"Order #{self.order['order_id']} marked as **Paid**.",
-                color=discord.Color.green()
+            if badge_row is None:
+                await interaction.response.send_message(
+                    "❌ Badge 'Purchased Card' does not exist in the badges table.",
+                    ephemeral=True
+                )
+                return
+
+            badge_id = badge_row["badge_id"]
+            emoji_id = badge_row["emoji_id"]
+            badge_url = badge_row["badge_url"]
+
+            # --- CHECK IF BUYER ALREADY HAS BADGE ---
+            already_has = await conn.fetchval(
+                """
+                SELECT 1
+                FROM user_badges
+                WHERE user_id = $1 AND badge_id = $2 AND guild_id = $3
+                LIMIT 1;
+                """,
+                user_id,
+                badge_id,
+                interaction.guild.id
+            )
+
+            # --- AWARD BADGE ONLY IF NOT ALREADY AWARDED ---
+            if not already_has:
+                await conn.execute(
+                    """
+                    INSERT INTO user_badges (user_id, badge_id, guild_id, awarded_at)
+                    VALUES ($1, $2, $3, NOW());
+                    """,
+                    user_id,
+                    badge_id,
+                    interaction.guild.id
+                )
+
+                # --- SEND DM TO BUYER ---
+                try:
+                    buyer = await interaction.client.fetch_user(user_id)
+
+                    dm_embed = discord.Embed(
+                        title="🎉 You Earned a Badge!",
+                        description=(
+                            "You earned the **Purchased Card** badge!\n\n"
+                            "View your badges by running **/mybadges**.\n"
+                            "To see what other badges you can unlock, "
+                            "view other guild members' badges using **/userbadges**."
+                        ),
+                        color=discord.Color.green()
+                    )
+
+                    if badge_url:
+                        dm_embed.set_thumbnail(url=badge_url)
+
+                    await buyer.send(embed=dm_embed)
+
+                except Exception as e:
+                    print(f"Failed to DM buyer {user_id}: {e}")
+
+        # --- CONFIRMATION MESSAGE TO ADMIN ---
+        admin_embed = discord.Embed(
+            title="Order Marked as Paid",
+            description=(
+                f"The buyer has been awarded the **Purchased Card** badge!\n\n<:{emoji_id}>"
+                if not already_has else
+                f"The buyer already has the **Purchased Card** badge.\n\n<:{emoji_id}>"
             ),
-            ephemeral=True
+            color=discord.Color.green()
         )
+
+        await interaction.response.send_message(embed=admin_embed, ephemeral=True)
 
 
 class MarkShippedButton(discord.ui.Button):

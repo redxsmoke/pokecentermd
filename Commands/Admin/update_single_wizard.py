@@ -619,8 +619,10 @@ async def get_admin_channel(bot, guild_id):
 async def start_update_single_wizard(
     interaction: discord.Interaction,
     bot: commands.Bot,
-    inventory_id: int
+    inventory_id: int,
+    card_row: dict
 ):
+
     admin_channel = await get_admin_channel(bot, interaction.guild.id)
 
     if admin_channel is None:
@@ -632,8 +634,8 @@ async def start_update_single_wizard(
 
     view = UpdateSingleWizardView(bot, interaction.user)
     view.state["inventory_id"] = inventory_id
-    view.state["original_image"] = card_row["image_link"]
-    view.state["image_link"] = card_row["image_link"]  
+    view.state["original_image"] = card_row.get("image_link")
+    view.state["image_link"] = card_row.get("image_link")
 
     embed = view.build_embed()
     msg = await admin_channel.send(embed=embed, view=view)

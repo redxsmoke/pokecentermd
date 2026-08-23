@@ -6,8 +6,10 @@ import datetime
 # ADMIN ORDER VIEW
 # =====================================================================
 class AdminOrderView(discord.ui.View):
+
     def __init__(self, bot, order_id, user_id, items, shipping_method, admin_id):
         super().__init__(timeout=None)
+
         self.bot = bot
         self.order_id = order_id
         self.user_id = user_id
@@ -15,252 +17,46 @@ class AdminOrderView(discord.ui.View):
         self.shipping_method = shipping_method
         self.admin_id = admin_id
 
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.label in ("Mark Shipped", "Enter Tracking #"):
-                child.disabled = True
+        # REMOVE ALL BUTTONS
+        for child in list(self.children):
+            self.remove_item(child)
 
-    @discord.ui.button(label="Confirm Payment", style=discord.ButtonStyle.success)
-    async def confirm_payment(self, interaction, button):
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Access Denied",
-                    description="Only the admin can confirm payment.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
+    async def send_admin_notification(self, interaction):
+        """
+        Sends a DM to the admin notifying them of a new order.
+        No buttons. No actions. Just instructions.
+        """
+
+        admin = await interaction.client.fetch_user(self.admin_id)
+
+        # Build item list
+        item_lines = []
+        for item in self.items:
+            item_lines.append(
+                f"• {item['pokemon_name']} — {item['series']} / {item['set_name']} "
+                f"({item.get('condition', 'N/A')}) x{item['quantity']} @ ${item['price_each']:.2f}"
             )
-            return
+        items_text = "\n".join(item_lines)
 
-        async with self.bot.db.acquire() as conn:
-            status = await conn.fetchrow(
-                "SELECT order_status FROM orders WHERE order_id = $1;",
-                self.order_id
-            )
-
-        if status["order_status"] != "Pending":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Payment Already Confirmed",
-                    description="Payment was already confirmed for this order.",
-                    color=discord.Color.orange()
-                ),
-                ephemeral=True
-            )
-            return
-
-        estimated_delivery = datetime.date.today() + datetime.timedelta(days=14)
-
-        async with self.bot.db.acquire() as conn:
-            for item in self.items:
-                await conn.execute(
-                    """
-                    UPDATE inventory
-                    SET reserved = GREATEST(reserved - $1, 0),
-                        quantity_available = GREATEST(quantity_available - $1, 0),
-                        reserved_until = NULL
-                    WHERE inventory_id = $2;
-                    """,
-                    item["quantity"],
-                    item["inventory_id"]
-                )
-
-            await conn.execute(
-                """
-                UPDATE orders
-                SET order_status = 'Paid',
-                    date_paid = NOW(),
-                    estimated_delivery = $2
-                WHERE order_id = $1;
-                """,
-                self.order_id,
-                estimated_delivery
-            )
-
-        button.disabled = True
-
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.label == "Mark Shipped":
-                child.disabled = False
-
-        await interaction.message.edit(view=self)
-
-        buyer = await interaction.client.fetch_user(self.user_id)
-        try:
-            await buyer.send(
-                embed=discord.Embed(
-                    title="Payment Confirmed",
-                    description=f"Your payment for order #{self.order_id} has been confirmed.\n"
-                                f"Estimated delivery: **{estimated_delivery.strftime('%Y-%m-%d')}**",
-                    color=discord.Color.green()
-                )
-            )
-        except:
-            pass
-
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Order Updated",
-                description=f"Order #{self.order_id} marked as **Paid**.",
-                color=discord.Color.green()
+        embed = discord.Embed(
+            title=f"🛒 New Order Placed — #{self.order_id}",
+            description=(
+                f"A new order has been placed.\n\n"
+                f"**Buyer:** <@{self.user_id}>\n"
+                f"**Shipping Method:** {self.shipping_method}\n\n"
+                f"**Items:**\n{items_text}\n\n"
+                f"To manage this order (mark as **Paid**, **Shipped**, enter **Tracking**, cancel, etc.), "
+                f"use the command:\n"
+                f"**/admin manage_orders**\n\n"
+                f"This DM is informational only — all actions must be done using the admin command."
             ),
-            ephemeral=True
+            color=discord.Color.blue()
         )
 
-    @discord.ui.button(label="Mark Shipped", style=discord.ButtonStyle.primary)
-    async def mark_shipped(self, interaction, button):
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Access Denied",
-                    description="Only the admin can mark orders as shipped.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
-            )
-            return
-
-        async with self.bot.db.acquire() as conn:
-            status = await conn.fetchrow(
-                "SELECT order_status, shipping_method FROM orders WHERE order_id = $1;",
-                self.order_id
-            )
-
-        if status["order_status"] == "Shipped":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Already Shipped",
-                    description="Shipping was already confirmed for this order.",
-                    color=discord.Color.orange()
-                ),
-                ephemeral=True
-            )
-            return
-
-        if status["order_status"] == "Cancelled":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Order Cancelled",
-                    description="This order was cancelled. No further actions can be taken.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
-            )
-            return
-
-        shipping_method = status["shipping_method"].lower()
-
-        async with self.bot.db.acquire() as conn:
-            await conn.execute(
-                """
-                UPDATE orders
-                SET order_status = 'Shipped',
-                    date_shipped = NOW()
-                WHERE order_id = $1;
-                """,
-                self.order_id
-            )
-
-            if "plain white envelope" in shipping_method:
-                await conn.execute(
-                    """
-                    UPDATE orders
-                    SET tracking_number = 'Shipped without tracking'
-                    WHERE order_id = $1;
-                    """,
-                    self.order_id
-                )
-
-        button.disabled = True
-
-        for child in self.children:
-            if isinstance(child, discord.ui.Button) and child.label == "Enter Tracking #":
-                child.disabled = ("plain white envelope" in shipping_method)
-
-        await interaction.message.edit(view=self)
-
-        buyer = await interaction.client.fetch_user(self.user_id)
         try:
-            await buyer.send(
-                embed=discord.Embed(
-                    title="Order Shipped",
-                    description=f"Your order #{self.order_id} has been marked as shipped.",
-                    color=discord.Color.green()
-                )
-            )
-        except:
-            pass
-
-        await interaction.response.send_message(
-            embed=discord.Embed(
-                title="Order Updated",
-                description=f"Order #{self.order_id} marked as **Shipped**.",
-                color=discord.Color.green()
-            ),
-            ephemeral=True
-        )
-
-    @discord.ui.button(label="Enter Tracking #", style=discord.ButtonStyle.secondary)
-    async def enter_tracking(self, interaction, button):
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Access Denied",
-                    description="Only the admin can enter tracking numbers.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
-            )
-            return
-
-        async with self.bot.db.acquire() as conn:
-            status = await conn.fetchrow(
-                "SELECT order_status, shipping_method FROM orders WHERE order_id = $1;",
-                self.order_id
-            )
-
-        if status["order_status"] != "Shipped":
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Not Shipped Yet",
-                    description="You cannot enter a tracking number until the order is marked as shipped.",
-                    color=discord.Color.orange()
-                ),
-                ephemeral=True
-            )
-            return
-
-        if "plain white envelope" in status["shipping_method"].lower():
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="No Tracking Required",
-                    description="This order was shipped via PWE and does not have tracking.",
-                    color=discord.Color.orange()
-                ),
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_modal(
-            TrackingNumberModal(self.bot, self.order_id, self.user_id, self, self.admin_id)
-        )
-
-    @discord.ui.button(label="Cancel Order", style=discord.ButtonStyle.danger)
-    async def cancel_order(self, interaction, button):
-        if interaction.user.id != self.admin_id:
-            await interaction.response.send_message(
-                embed=discord.Embed(
-                    title="Access Denied",
-                    description="Only the admin can cancel orders.",
-                    color=discord.Color.red()
-                ),
-                ephemeral=True
-            )
-            return
-
-        await interaction.response.send_modal(
-            CancelOrderModal(self.bot, self.order_id, self.user_id, self.items, self, self.admin_id)
-        )
+            await admin.send(embed=embed)
+        except Exception as e:
+            print("ADMIN DM ERROR:", e)
 
 # =====================================================================
 # TRACKING NUMBER MODAL
@@ -995,4 +791,3 @@ class MyOrdersView(discord.ui.View):
 
 async def setup(bot):
     pass
-

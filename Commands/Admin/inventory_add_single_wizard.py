@@ -2,6 +2,13 @@ import discord
 from discord.ext import commands
 from discord import ui
 from io import BytesIO
+from Commands.BotSettings.admin_channel_helpers import (
+    get_admin_channel,
+    get_singles_role,
+    get_singles_notifications_enabled,
+    get_singles_channel
+)
+
 
 class WizardStep:
     POKEMON_NAME = 1
@@ -426,6 +433,92 @@ class ImageDecisionView(ui.View):
 
         await insert_card_into_db(self.state, self.bot, interaction.guild.id)
 
+        async with self.bot.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT inventory_id
+                FROM inventory
+                WHERE guild_id = $1
+                  AND date_added = CURRENT_DATE
+                ORDER BY inventory_id DESC
+                LIMIT 1
+                """,
+                interaction.guild.id
+            )
+
+        notifications_enabled = await get_singles_notifications_enabled(self.bot, interaction.guild.id)
+
+        if rows and notifications_enabled:
+            singles_channel = await get_singles_channel(self.bot, interaction.guild.id)
+            singles_role = await get_singles_role(self.bot, interaction.guild.id)
+            ping_text = singles_role.mention if singles_role else ""
+
+            if singles_channel is None:
+                admin_channel = await get_admin_channel(self.bot, interaction.guild.id)
+
+                if admin_channel:
+                    guild_owner = admin_channel.guild.owner
+
+                    if guild_owner:
+                        try:
+                            await guild_owner.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+                        except:
+                            await admin_channel.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+
+                singles_channel = None
+
+            if singles_channel:
+                # Fetch card details
+                async with self.bot.db.acquire() as conn:
+                    card = await conn.fetchrow("""
+                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        FROM inventory
+                        WHERE inventory_id = $1
+                    """, rows[0]["inventory_id"])
+
+                embed = discord.Embed(
+                    title="📢 New Single Added!",
+                    description="A new single has just been added to the shop.",
+                    color=discord.Color.blue()
+                )
+
+                embed.add_field(name="Name", value=card["pokemon_name"], inline=False)
+                embed.add_field(name="Condition", value=card["condition"], inline=False)
+                embed.add_field(name="Price", value=f"${card['price']}", inline=False)
+                embed.add_field(name="Series", value=card["series"], inline=False)
+                embed.add_field(name="Set", value=card["set_name"], inline=False)
+
+                if card["image_link"]:
+                    embed.set_thumbnail(url=card["image_link"])
+
+                await singles_channel.send(content=ping_text, embed=embed)
+
         done = discord.Embed(
             title="Card Added",
             description="Card added to inventory successfully.",
@@ -437,7 +530,94 @@ class ImageDecisionView(ui.View):
     @ui.button(label="Don't Upload Image", style=discord.ButtonStyle.secondary)
     async def skip_image(self, interaction: discord.Interaction, button: ui.Button):
 
+        self.state["image_link"] = None
+
         await insert_card_into_db(self.state, self.bot, interaction.guild.id)
+
+        async with self.bot.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT inventory_id
+                FROM inventory
+                WHERE guild_id = $1
+                  AND date_added = CURRENT_DATE
+                ORDER BY inventory_id DESC
+                LIMIT 1
+                """,
+                interaction.guild.id
+            )
+
+        notifications_enabled = await get_singles_notifications_enabled(self.bot, interaction.guild.id)
+
+        if rows and notifications_enabled:
+            singles_channel = await get_singles_channel(self.bot, interaction.guild.id)
+            singles_role = await get_singles_role(self.bot, interaction.guild.id)
+            ping_text = singles_role.mention if singles_role else ""
+
+            if singles_channel is None:
+                admin_channel = await get_admin_channel(self.bot, interaction.guild.id)
+
+                if admin_channel:
+                    guild_owner = admin_channel.guild.owner
+
+                    if guild_owner:
+                        try:
+                            await guild_owner.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+                        except:
+                            await admin_channel.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+
+                singles_channel = None
+
+            if singles_channel:
+                # Fetch card details
+                async with self.bot.db.acquire() as conn:
+                    card = await conn.fetchrow("""
+                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        FROM inventory
+                        WHERE inventory_id = $1
+                    """, rows[0]["inventory_id"])
+
+                embed = discord.Embed(
+                    title="📢 New Single Added!",
+                    description="A new single has just been added to the shop.",
+                    color=discord.Color.blue()
+                )
+
+                embed.add_field(name="Name", value=card["pokemon_name"], inline=False)
+                embed.add_field(name="Condition", value=card["condition"], inline=False)
+                embed.add_field(name="Price", value=f"${card['price']}", inline=False)
+                embed.add_field(name="Series", value=card["series"], inline=False)
+                embed.add_field(name="Set", value=card["set_name"], inline=False)
+
+                # No thumbnail here — card has no image
+
+                await singles_channel.send(content=ping_text, embed=embed)
 
         embed = discord.Embed(
             title="Card Added",
@@ -450,7 +630,6 @@ class ImageDecisionView(ui.View):
 
 async def insert_card_into_db(state, bot, guild_id):
     async with bot.db.acquire() as conn:
-        # Insert the new card
         await conn.execute(
             """
             INSERT INTO inventory (
@@ -482,9 +661,6 @@ async def insert_card_into_db(state, bot, guild_id):
             guild_id
         )
 
-        #
-        # ⭐ WISHLIST MATCHING TRIGGER
-        #
         filters = await conn.fetch(
             """
             SELECT *
@@ -494,38 +670,30 @@ async def insert_card_into_db(state, bot, guild_id):
             guild_id
         )
 
-        # Compare the new card against each wishlist filter
         for f in filters:
             match = True
 
-            # pokemon_name (LIKE match)
             if f["pokemon_name"] and f["pokemon_name"].lower() not in state["pokemon_name"].lower():
                 match = False
 
-            # variant
             if f["variant"] and f["variant"].lower() not in (state["variant"] or "").lower():
                 match = False
 
-            # price <= wishlist price
             if f["price"] is not None and float(state["price"]) > f["price"]:
                 match = False
 
-            # condition exact match
             if f["condition"] and f["condition"] != state["condition"]:
                 match = False
 
-            # series exact match
             if f["series"] and f["series"] != state["series"]:
                 match = False
 
-            # set_name exact match
             if f["set_name"] and f["set_name"] != state["set_name"]:
                 match = False
 
             if not match:
                 continue
 
-            # --- SEND DM TO USER ---
             try:
                 user = await bot.fetch_user(f["user_id"])
 
@@ -542,7 +710,6 @@ async def insert_card_into_db(state, bot, guild_id):
                     color=discord.Color.green()
                 )
 
-                # ⭐ Add image thumbnail if available
                 if state["image_link"]:
                     embed.set_thumbnail(url=state["image_link"])
 

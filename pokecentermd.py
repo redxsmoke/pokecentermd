@@ -3,9 +3,14 @@ import discord
 import logging
 from discord.ext import commands
 from dotenv import load_dotenv
+from Commands.BotSettings.admin_channel_helpers import get_singles_role
+
 
 # DB imports
 from db.connection import init_db, get_pool
+
+# BADGE SYSTEM IMPORT
+from Users.upsertuser import BadgeDB
 
 # -------------------------
 #   SHOP STATE VARIABLES
@@ -33,6 +38,9 @@ class MyBot(commands.Bot):
         await init_db()
         self.db = get_pool()
 
+        # Initialize badge system
+        self.badgedb = BadgeDB(self.db)
+
         extensions = [
             "Commands.Inventory.inventory",
             "Commands.Cart.cart",
@@ -44,7 +52,13 @@ class MyBot(commands.Bot):
             "Commands.BuyingGuide.buyingguide",
             "Commands.UpcomingShows.upcomingshows",
             "Commands.BotSettings.releasenotesannouncement",
-            "Commands.wishlist.mywishlist"
+            "Commands.Badges.mybadges",
+            "Commands.Badges.userbadges",
+            "Commands.CatchPokemon.catchpokemoncommand",
+            "Commands.Daily.dailycommand",
+            "Commands.wishlist.mywishlist",
+            "Commands.SinglesRole.singlesrole",
+            "Commands.RecentlyAdded.recentlyadded" 
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
@@ -99,15 +113,78 @@ async def on_app_command_error(interaction: discord.Interaction, error):
 
 
 # ---------------------------------------------------------
-#   SAFE INTERACTION LOGGER (DOES NOT BREAK SLASH COMMANDS)
+#   SAFE INTERACTION LOGGER + BADGE SYSTEM HOOK
 # ---------------------------------------------------------
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     logger.debug(
         f"[INTERACTION] type={interaction.type} id={interaction.id} data={interaction.data}"
     )
-    # IMPORTANT: do NOT touch interaction.response here
-    # Let discord.py handle slash commands normally
+
+    # --- Badge System User Tracking ---
+    async with bot.db.acquire() as conn:
+        created = await bot.badgedb.ensure_user_exists(interaction.user, interaction.guild.id)
+
+        # Award First Partner badge ONLY if user is new AND does NOT already have it
+        if created:
+
+            # Check if user already has the badge
+            has_badge = await conn.fetchval("""
+                SELECT 1
+                FROM user_badges ub
+                JOIN badges b ON b.badge_id = ub.badge_id
+                WHERE ub.user_id = $1
+                AND LOWER(b.name) = 'first partner'
+                LIMIT 1;
+            """, interaction.user.id)
+
+            if not has_badge:
+                await bot.badgedb.auto_award_first_partner(interaction.user.id)
+
+                # Fetch badge info
+                badge = await conn.fetchrow("""
+                    SELECT name, emoji_name, emoji_id, description
+                    FROM badges
+                    WHERE LOWER(name) = 'first partner';
+                """)
+
+                # Build embed
+                embed = discord.Embed(
+                    title="🎉 Badge Awarded!",
+                    description=f"You’ve earned the **{badge['name']}** badge!",
+                    color=discord.Color.gold()
+                )
+
+                # Render badge emoji exactly like your Items bot
+                badge_emoji = (
+                    f"<:{badge['emoji_name']}:{badge['emoji_id']}>"
+                    if badge["emoji_id"] else "⬜"
+                )
+
+                embed.add_field(
+                    name="Badge Description:",
+                    value=badge["description"],
+                    inline=False
+                )
+
+                embed.add_field(
+                    name="Next Steps",
+                    value=(
+                        "Run **/mybadges** to view all your badges.\n"
+                        "Run **/userbadges @user** to view other users' badges."
+                    ),
+                    inline=False
+                )
+
+                # Thumbnail uses the badge emoji image
+                embed.set_thumbnail(
+                    url=f"https://cdn.discordapp.com/emojis/{badge['emoji_id']}.png?size=96&quality=lossless"
+                )
+
+                try:
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                except discord.InteractionResponded:
+                    pass
 
 
 # ---------------------------------------------------------
@@ -116,6 +193,9 @@ async def on_interaction(interaction: discord.Interaction):
 @bot.event
 async def on_member_join(member: discord.Member):
     print(f"[DEBUG] Member joined: {member} (ID: {member.id}) in guild {member.guild.name}")
+
+    # --- FIX ADDED HERE ---
+    await bot.badgedb.ensure_user_exists(member, member.guild.id)
 
     # Fetch welcome channel from DB
     async with bot.db.acquire() as conn:
@@ -143,6 +223,7 @@ async def on_member_join(member: discord.Member):
         "• **/sellyourcards** – send us cards you'd like to offload\n"
         "• **/buyingguide** – view our current buying rates\n"
         "• **/myorders** – view your past orders\n"
+        "• **/mywishlist add/remove/list** – Manage your wish list. Get alerts for new singles that match your wish list!\n"
         "• **/upcomingshows** – see what shows we are attending soon!\n\n"
         "To get a refresher about what commands the bot offers, use **/help**!"
     )
@@ -165,6 +246,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
     embed.add_field(name="📦 /myorders", value="View your past orders.", inline=False)
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
+    embed.add_field(name="✨ /mywishlist add/remove/list", value="Manage your wish list. Get alerts for new singles that match your wish list!", inline=False)
     embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)

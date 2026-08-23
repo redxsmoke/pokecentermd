@@ -202,7 +202,11 @@ class MyOrders(commands.Cog):
                 f"**Payment:** {payment_method.capitalize()}\n"
                 f"**Shipping:** {shipping_method}\n"
                 f"**Total:** ${total:.2f}\n\n"
-                f"**Items:**\n{item_lines}"
+                f"**Items:**\n{item_lines}\n\n"
+                f"To manage this order (mark as **Paid**, **Shipped**, **Enter Tracking**, **Cancel**, etc.), "
+                f"use the command:\n"
+                f"**/admin manage_orders**\n\n"
+                f"This DM is informational only — all actions must be done using the admin-manage_orders command."
             ),
             color=discord.Color.blue()
         )
