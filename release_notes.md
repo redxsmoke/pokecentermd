@@ -55,6 +55,7 @@ Additional Info
 * Claim Sales
 * Support for adding and filtering sealed products
 * Points, XP, and Levels system. Earn rewards, perks, and bonuses
+* /pokedex command - View the pokemon you've caught with the pokemon catch game, sort and filter by region
 
 
 

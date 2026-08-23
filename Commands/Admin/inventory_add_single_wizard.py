@@ -440,6 +440,8 @@ class ImageDecisionView(ui.View):
                 FROM inventory
                 WHERE guild_id = $1
                   AND date_added = CURRENT_DATE
+                ORDER BY inventory_id DESC
+                LIMIT 1
                 """,
                 interaction.guild.id
             )
@@ -492,14 +494,30 @@ class ImageDecisionView(ui.View):
                 singles_channel = None
 
             if singles_channel:
-                await singles_channel.send(
-                    content=ping_text,
-                    embed=discord.Embed(
-                        title="📢 New Single Available!",
-                        description="A new single has just been added.\n\nUse the **/recentlyadded** command to view them.",
-                        color=discord.Color.blue()
-                    )
+                # Fetch card details
+                async with self.bot.db.acquire() as conn:
+                    card = await conn.fetchrow("""
+                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        FROM inventory
+                        WHERE inventory_id = $1
+                    """, rows[0]["inventory_id"])
+
+                embed = discord.Embed(
+                    title="📢 New Single Added!",
+                    description="A new single has just been added to the shop.",
+                    color=discord.Color.blue()
                 )
+
+                embed.add_field(name="Name", value=card["pokemon_name"], inline=False)
+                embed.add_field(name="Condition", value=card["condition"], inline=False)
+                embed.add_field(name="Price", value=f"${card['price']}", inline=False)
+                embed.add_field(name="Series", value=card["series"], inline=False)
+                embed.add_field(name="Set", value=card["set_name"], inline=False)
+
+                if card["image_link"]:
+                    embed.set_thumbnail(url=card["image_link"])
+
+                await singles_channel.send(content=ping_text, embed=embed)
 
         done = discord.Embed(
             title="Card Added",
@@ -523,6 +541,8 @@ class ImageDecisionView(ui.View):
                 FROM inventory
                 WHERE guild_id = $1
                   AND date_added = CURRENT_DATE
+                ORDER BY inventory_id DESC
+                LIMIT 1
                 """,
                 interaction.guild.id
             )
@@ -575,14 +595,29 @@ class ImageDecisionView(ui.View):
                 singles_channel = None
 
             if singles_channel:
-                await singles_channel.send(
-                    content=ping_text,
-                    embed=discord.Embed(
-                        title="📢 New Single Available!",
-                        description="A new single has just been added.\n\nUse the **/recentlyadded** command to view them.",
-                        color=discord.Color.blue()
-                    )
+                # Fetch card details
+                async with self.bot.db.acquire() as conn:
+                    card = await conn.fetchrow("""
+                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        FROM inventory
+                        WHERE inventory_id = $1
+                    """, rows[0]["inventory_id"])
+
+                embed = discord.Embed(
+                    title="📢 New Single Added!",
+                    description="A new single has just been added to the shop.",
+                    color=discord.Color.blue()
                 )
+
+                embed.add_field(name="Name", value=card["pokemon_name"], inline=False)
+                embed.add_field(name="Condition", value=card["condition"], inline=False)
+                embed.add_field(name="Price", value=f"${card['price']}", inline=False)
+                embed.add_field(name="Series", value=card["series"], inline=False)
+                embed.add_field(name="Set", value=card["set_name"], inline=False)
+
+                # No thumbnail here — card has no image
+
+                await singles_channel.send(content=ping_text, embed=embed)
 
         embed = discord.Embed(
             title="Card Added",
