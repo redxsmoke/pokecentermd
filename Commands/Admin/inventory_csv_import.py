@@ -4,6 +4,14 @@ from discord.ext import commands
 import csv
 import io
 from datetime import datetime
+from Commands.BotSettings.admin_channel_helpers import (
+    get_admin_channel,
+    get_singles_role,
+    get_singles_notifications_enabled,
+    get_singles_channel
+)
+
+
 
 VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
@@ -387,6 +395,73 @@ class InventoryCSVImport(commands.Cog):
                 color=discord.Color.orange()
             )
             await msg.reply(embed=warn_embed, mention_author=False)
+
+        # ⭐ NEW — singles notification after CSV finishes
+        async with self.bot.db.acquire() as conn:
+            rows = await conn.fetch(
+                """
+                SELECT inventory_id
+                FROM inventory
+                WHERE guild_id = $1
+                  AND date_added = CURRENT_DATE
+                """,
+                guild_id
+            )
+
+        if rows:
+            singles_channel = await get_singles_channel(self.bot, guild_id)
+            singles_role = await get_singles_role(self.bot, guild_id)
+            ping_text = singles_role.mention if singles_role else ""
+
+            if singles_channel is None:
+                admin_channel = await get_admin_channel(self.bot, guild_id)
+
+                if admin_channel:
+                    guild_owner = admin_channel.guild.owner
+
+                    if guild_owner:
+                        try:
+                            await guild_owner.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+                        except:
+                            await admin_channel.send(
+                                embed=discord.Embed(
+                                    title="⚠️ Singles Notification Not Sent",
+                                    description=(
+                                        "A new Singles notification was **not sent** because no Singles "
+                                        "Notification Channel has been configured.\n\n"
+                                        "Please set one using:\n"
+                                        "**/admin bot_settings → Set Singles Notification Channel**\n\n"
+                                        "Or disable Singles notifications using:\n"
+                                        "**/admin bot_settings → Toggle Singles Notifications**"
+                                    ),
+                                    color=discord.Color.orange()
+                                )
+                            )
+
+                singles_channel = None
+
+            if singles_channel:
+                await singles_channel.send(
+                    content=ping_text,
+                    embed=discord.Embed(
+                        title="📢 New Singles Available!",
+                        description="New singles have just been added.\n\nUse the **/recentlyadded** command to view them.",
+                        color=discord.Color.blue()
+                    )
+                )
 
         success_embed = discord.Embed(
             title="✅ CSV Processed",

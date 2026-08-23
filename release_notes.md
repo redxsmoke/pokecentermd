@@ -1,43 +1,60 @@
-send: false
+send: true
 
-Version: 1.2
+Version: 1.3
 
 
 
 What's New
 
-* ***New mywishlist system***
+* ***New Badge system*** 
+* ***New Pokémon Catch Game***
+* ***New command to view recently added cards***
+* ***Notifications for newly added singles (admin and user config)***
+* ***Grouping of admin commands*** 
+* ***New singles configuration for admins***
 
 
 
 New Commands
 
-* /mywishlist add
-* /mywishlist list
-* /mywishlist remove
+* /recentlyadded
+* /singlesrole
+* /mybadges
+* /userbadges
+* /catchpokemon
+* /daily
+
+
 
 
 
 How to Use
 
-* **Run /mywishlist add** — This allows a user to add a card or cards to their wish list. By entering more details you can narrow your search or by entering fewer details you can expand your search. For example, if you only input Pikachu as the Pokémon name, you will get a DM whenever a new Pikachu card is added. If you enter a series and set, you will get notified only when a Pikachu matching that series and set is added.
-* **Run /mywishlist list** — This allows you to view your saved wish list entries and notes.
-* **Run /wishlist remove** — Lets you remove an entry from your wish list.
+* **Run /recentlyadded** — View, sort, and purchase the newest singles!
+* **Run /singlesrole** - Be the first to get alerts when new singles are added. (Singles role must be configured by guild administrator)
+* **Run /mybadges** — View the badges you've been awarded
+* **Run /userbadges** — View badges other users have been rewarded
+* **Run /catchpokemon** - Catch 'em all! Unlock rewards. (points and guild specific rewards not yet implemented)
+* **Run /daily** - Run the /daily command to receive your daily poke balls! (Points, XP, Levels not yet implemented) - Resets every 24 hours.
+
+
 
 
 
 Additional Info
 
-* Minor bug fixes and improvements have been made to various UI screens.
-* UI Redesign of /sellyourcards - now it's easier to submit singles for sale!
+* First Partner Badge added. This badge is awarded to the first 100 users of the bot! Claim your badge before it's gone!
+* Regional badges added. Earn a badge for catching all Pokémon in a specific region (Kanto, Johto, etc..)
+
+
 
 
 
 ★★Upcoming Features★★
 
 * Claim Sales
-* New singles notifications
 * Support for adding and filtering sealed products
+* Points, XP, and Levels system. Earn rewards, perks, and bonuses
 
 
 
