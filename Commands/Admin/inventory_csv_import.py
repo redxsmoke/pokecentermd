@@ -74,6 +74,9 @@ class InventoryCSVImport(commands.Cog):
         invalid_image_found = False
         valid_image_found = False
 
+        # ⭐ NEW — track if any new cards were inserted
+        new_cards_inserted = False
+
         # ⭐ Condition mapping (strict)
         condition_map = {
             "nm": "Near Mint",
@@ -335,6 +338,9 @@ class InventoryCSVImport(commands.Cog):
                         note5
                     )
 
+                    # ⭐ NEW — mark that a new card was inserted
+                    new_cards_inserted = True
+
                     # ⭐ Wishlist notifications unchanged
                     filters = await conn.fetch(
                         "SELECT * FROM user_wishlist WHERE guild_id = $1",
@@ -396,19 +402,8 @@ class InventoryCSVImport(commands.Cog):
             )
             await msg.reply(embed=warn_embed, mention_author=False)
 
-        # ⭐ NEW — singles notification after CSV finishes
-        async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT inventory_id
-                FROM inventory
-                WHERE guild_id = $1
-                  AND date_added = CURRENT_DATE
-                """,
-                guild_id
-            )
-
-        if rows:
+        # ⭐ NEW — singles notification only if new cards were inserted
+        if new_cards_inserted:
             singles_channel = await get_singles_channel(self.bot, guild_id)
             singles_role = await get_singles_role(self.bot, guild_id)
             ping_text = singles_role.mention if singles_role else ""
