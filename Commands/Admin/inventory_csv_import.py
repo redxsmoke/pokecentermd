@@ -390,6 +390,52 @@ class InventoryCSVImport(commands.Cog):
                         except Exception as e:
                             print(f"Failed to DM user {f['user_id']}: {e}")
 
+            # ⭐⭐⭐ ZERO‑QUANTITY FIX — ADDED WITHOUT ALTERING ANYTHING ELSE ⭐⭐⭐
+
+            # Build CSV key set
+            csv_keys = set()
+            for row in rows:
+                name = (row.get("Name") or "").strip().lower()
+                series = (row.get("Series") or "").strip().lower()
+                set_name = (row.get("Set") or "").strip().lower()
+                variant = (row.get("Variant") or "").strip().lower()
+                raw_id = (row.get("Id") or "").strip().lower()
+
+                if raw_id and "-" in raw_id:
+                    card_number = raw_id.split("-")[-1].strip().lower()
+                else:
+                    card_number = raw_id
+
+                note1 = (row.get("Note 1") or "").strip().lower()
+                condition = condition_map.get(note1, "Near Mint")
+
+                csv_keys.add((name, card_number, set_name, series, variant, condition))
+
+            # Fetch DB rows for this CSV
+            db_rows = await conn.fetch("""
+                SELECT inventory_id, pokemon_name, card_number, set_name, series, variant, condition
+                FROM inventory
+                WHERE guild_id = $1 AND csv_id = $2
+            """, guild_id, csv_id)
+
+            # Zero out missing rows
+            for r in db_rows:
+                key = (
+                    r["pokemon_name"].lower(),
+                    r["card_number"].lower(),
+                    r["set_name"].lower(),
+                    r["series"].lower(),
+                    r["variant"].lower(),
+                    r["condition"]
+                )
+
+                if key not in csv_keys:
+                    await conn.execute("""
+                        UPDATE inventory
+                        SET quantity_available = 0
+                        WHERE inventory_id = $1
+                    """, r["inventory_id"])
+
         if invalid_image_found and valid_image_found:
             warn_embed = discord.Embed(
                 title="⚠️ Image URL Warning",
