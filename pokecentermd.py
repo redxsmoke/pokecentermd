@@ -224,6 +224,10 @@ async def on_member_join(member: discord.Member):
         "• **/buyingguide** – view our current buying rates\n"
         "• **/myorders** – view your past orders\n"
         "• **/mywishlist add/remove/list** – Manage your wish list. Get alerts for new singles that match your wish list!\n"
+        "• **/catchpokemon** – Earn rewards by catching pokemon!\n"
+        "• **/daily** – Earn rewards by checking in daily\n"
+        "• **/mybadges** – View your badges\n"
+        "• **/userbadges** – View other server members badges\n"
         "• **/upcomingshows** – see what shows we are attending soon!\n\n"
         "To get a refresher about what commands the bot offers, use **/help**!"
     )
@@ -247,6 +251,10 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="📦 /myorders", value="View your past orders.", inline=False)
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
     embed.add_field(name="✨ /mywishlist add/remove/list", value="Manage your wish list. Get alerts for new singles that match your wish list!", inline=False)
+    embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
+    embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
+    embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
+    embed.add_field(name="👤 /userbadges", value="View other server members' badges", inline=False)
     embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
 
     await interaction.response.send_message(embed=embed, ephemeral=True)

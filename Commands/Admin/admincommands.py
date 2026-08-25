@@ -7,7 +7,6 @@ from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
 
-
 # Batch upload
 from Commands.Admin.batch_image_upload import batch_image_upload
 
@@ -22,7 +21,6 @@ from Commands.Admin.inventory_delete_single import (
     start_delete_single_flow_with_id
 )
 
- 
 from Commands.BotSettings.bot_settings_menu import BotSettingsMenu
 
 from Commands.BotSettings.set_singles_role_slash import (
@@ -30,7 +28,10 @@ from Commands.BotSettings.set_singles_role_slash import (
     singles_role_autocomplete
 )
 
-
+from Commands.Admin.wishlist_dashboard import (
+    WishlistDashboardView,
+    WishlistDetailsSelect
+)
 
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
@@ -113,6 +114,12 @@ class AdminCommands(commands.Cog):
             callback=self.bot_settings
         )
 
+        wishlist_dashboard_cmd = discord.app_commands.Command(
+            name="wishlist_dashboard",
+            description="Admin-only: View wishlist dashboard.",
+            callback=self.wishlist_dashboard
+        )
+
         # -----------------------------
         # Batch upload
         # -----------------------------
@@ -133,7 +140,7 @@ class AdminCommands(commands.Cog):
         self.admin_group.add_command(activate_single_cmd)
         self.admin_group.add_command(deactivate_single_cmd)
         self.admin_group.add_command(delete_single_cmd)
-
+        self.admin_group.add_command(wishlist_dashboard_cmd)
 
         # NEW — bot settings dropdown
         self.admin_group.add_command(bot_settings_cmd)
@@ -538,8 +545,22 @@ class AdminCommands(commands.Cog):
     async def manage_orders(self, interaction: discord.Interaction):
         await start_manage_orders(interaction)
 
+    # ---------------------------------------------------------
+    # /admin wishlist_dashboard
+    # ---------------------------------------------------------
+    async def wishlist_dashboard(self, interaction: discord.Interaction):
+
+        await interaction.response.defer(ephemeral=True)
+
+        view = WishlistDashboardView(interaction)
+        await view.load_page()
+
+        await interaction.followup.send(
+            "Wishlist Dashboard:",
+            embed=view.embed,
+            view=view,
+            ephemeral=True
+        )
 
 async def setup(bot):
     await bot.add_cog(AdminCommands(bot))
-
-
