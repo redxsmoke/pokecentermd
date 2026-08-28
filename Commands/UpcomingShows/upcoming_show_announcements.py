@@ -1,5 +1,6 @@
 import discord
-
+from discord.ext import commands
+import re
 
 # ============================================================
 #   ANNOUNCEMENT SESSION STORAGE
@@ -115,13 +116,13 @@ class DiscountCodeModal(discord.ui.Modal, title="Enter Discount Code"):
         value = self.code.value.strip()
         self.session.discount_code = value if value else None
 
-        await interaction.response.send_message(
+        # ⭐ Modernized: use followup after modal submit
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(
             "Select a discount percent:",
             view=DiscountPercentView(self.cog, self.session),
             ephemeral=True
         )
-
-
 # ============================================================
 #   DISCOUNT PERCENT SELECT
 # ============================================================
@@ -212,79 +213,7 @@ class DiscountScopeView(discord.ui.View):
 
 
 # ============================================================
-#   ANNOUNCEMENT PREVIEW VIEW
-# ============================================================
-class PreviewAnnouncementView(discord.ui.View):
-    def __init__(self, cog, session: AnnouncementSession):
-        super().__init__(timeout=600)
-        self.cog = cog
-        self.session = session
-
-    @discord.ui.button(label="Send Message", style=discord.ButtonStyle.success)
-    async def send_message(self, interaction: discord.Interaction, button):
-
-        guild_id = interaction.guild.id
-        bot = interaction.client
-
-        async with bot.db.acquire() as conn:
-            row = await conn.fetchrow(
-                """
-                SELECT upcoming_shows_channel_id
-                FROM guild_settings
-                WHERE guild_id = $1
-                """,
-                guild_id
-            )
-
-        upcoming_channel_id = row["upcoming_shows_channel_id"] if row else None
-
-        if not upcoming_channel_id:
-            embed = discord.Embed(
-                title="Upcoming Shows Channel Not Configured",
-                description=(
-                    "You have not configured a designated channel to send upcoming show alerts.\n\n"
-                    "Please use /botsettings and select a channel where you'd like the alerts sent."
-                ),
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        channel = interaction.guild.get_channel(upcoming_channel_id)
-        if channel is None:
-            embed = discord.Embed(
-                title="Upcoming Shows Channel Invalid",
-                description=(
-                    "The configured upcoming shows channel no longer exists.\n\n"
-                    "Please use /botsettings and select a valid channel."
-                ),
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        await self.cog.send_announcement_broadcast(interaction, self.session)
-
-    @discord.ui.button(label="Edit Message", style=discord.ButtonStyle.secondary)
-    async def edit_message(self, interaction: discord.Interaction, button):
-        await interaction.response.edit_message(
-            content="Select a field to edit:",
-            embed=None,
-            view=EditAnnouncementFieldsView(self.cog, self.session)
-        )
-
-    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
-    async def cancel(self, interaction: discord.Interaction, button):
-        await interaction.response.edit_message(
-            content="Announcement cancelled. The show remains added.",
-            embed=None,
-            view=None
-        )
-        self.cog.end_announcement_session(self.session.user_id)
-
-
-# ============================================================
-#   EDIT ANNOUNCEMENT FIELDS
+#   EDIT ANNOUNCEMENT FIELD SELECT
 # ============================================================
 class EditAnnouncementFieldSelect(discord.ui.Select):
     def __init__(self, cog, session: AnnouncementSession):
@@ -356,3 +285,85 @@ class EditAnnouncementFieldModal(discord.ui.Modal):
             embed=preview_embed,
             view=PreviewAnnouncementView(self.cog, self.session)
         )
+# ============================================================
+#   ANNOUNCEMENT PREVIEW VIEW — FULLY MODERNIZED (OPTION B)
+# ============================================================
+class PreviewAnnouncementView(discord.ui.View):
+    def __init__(self, cog, session: AnnouncementSession):
+        super().__init__(timeout=600)
+        self.cog = cog
+        self.session = session
+
+    @discord.ui.button(label="Send Message", style=discord.ButtonStyle.success)
+    async def send_message(self, interaction: discord.Interaction, button):
+
+        # ⭐ CRITICAL FIX — ALWAYS DEFER FIRST
+        # This creates a fresh webhook token that NEVER expires mid-flow.
+        await interaction.response.defer(ephemeral=True)
+
+        guild_id = interaction.guild.id
+        bot = interaction.client
+
+        async with bot.db.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                SELECT upcoming_shows_channel_id
+                FROM guild_settings
+                WHERE guild_id = $1
+                """,
+                guild_id
+            )
+
+        upcoming_channel_id = row["upcoming_shows_channel_id"] if row else None
+
+        if not upcoming_channel_id:
+            embed = discord.Embed(
+                title="Upcoming Shows Channel Not Configured",
+                description=(
+                    "You have not configured a designated channel to send upcoming show alerts.\n\n"
+                    "Please use /botsettings and select a channel where you'd like the alerts sent."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        channel = interaction.guild.get_channel(upcoming_channel_id)
+        if channel is None:
+            embed = discord.Embed(
+                title="Upcoming Shows Channel Invalid",
+                description=(
+                    "The configured upcoming shows channel no longer exists.\n\n"
+                    "Please use /botsettings and select a valid channel."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            return
+
+        # ⭐ SAFE — followup always works after defer
+        await interaction.followup.send("Sending announcement...", ephemeral=True)
+
+        await self.cog.send_announcement_broadcast(interaction, self.session)
+
+    @discord.ui.button(label="Edit Message", style=discord.ButtonStyle.secondary)
+    async def edit_message(self, interaction: discord.Interaction, button):
+        await interaction.response.edit_message(
+            content="Select a field to edit:",
+            embed=None,
+            view=EditAnnouncementFieldsView(self.cog, self.session)
+        )
+
+    @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
+    async def cancel(self, interaction: discord.Interaction, button):
+        await interaction.response.edit_message(
+            content="Announcement cancelled. The show remains added.",
+            embed=None,
+            view=None
+        )
+        self.cog.end_announcement_session(self.session.user_id)
+
+from discord.ext import commands
+
+
+

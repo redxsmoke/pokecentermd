@@ -1,3 +1,5 @@
+# PART 1 — imports, sessions, modals, views
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -26,7 +28,7 @@ class ShowWizardSession:
         self.date = None
         self.time = None
         self.address = None
-        self.city = None          
+        self.city = None
         self.state = None
         self.zipcode = None
         self.flyer_url = None
@@ -215,6 +217,8 @@ class FlyerStepView(discord.ui.View):
             view=PreviewView(self.cog, self.session),
             ephemeral=True
         )
+# PART 2 — edit fields, preview view, month/show selects, pagination
+
 # ============================================================
 #   EDIT FIELD SELECT + MODAL
 # ============================================================
@@ -228,7 +232,7 @@ class EditFieldSelect(discord.ui.Select):
             discord.SelectOption(label="Date", value="date"),
             discord.SelectOption(label="Time", value="time"),
             discord.SelectOption(label="Address", value="address"),
-            discord.SelectOption(label="City", value="city"),  # ⭐ ADDED
+            discord.SelectOption(label="City", value="city"),
             discord.SelectOption(label="State", value="state"),
             discord.SelectOption(label="Zip Code", value="zipcode"),
             discord.SelectOption(label="Flyer", value="flyer"),
@@ -349,28 +353,27 @@ class PreviewView(discord.ui.View):
     @discord.ui.button(label="Confirm", style=discord.ButtonStyle.success)
     async def confirm(self, interaction: discord.Interaction, button):
 
+        # ⭐ Defer to create a stable webhook for followups
+        await interaction.response.defer(ephemeral=True)
+
         # ⭐ Editing mode
         if self.session.editing_show_id:
             await self.cog.update_show_into_db(self.session, interaction)
-            await interaction.response.edit_message(
-                content="✅ Show updated successfully.",
-                embed=None,
-                view=None
+            await interaction.followup.send(
+                "✅ Show updated successfully.",
+                ephemeral=True
             )
-            # NEW: start announcement flow after update
             ann_session = self.cog.create_announcement_session_from_show(self.session)
             await self.cog.start_announcement_flow(interaction, ann_session)
             self.cog.end_session(self.session.user_id)
             return
 
-        # ⭐ Add mode (unchanged)
+        # ⭐ Add mode
         await self.cog.insert_show_into_db(self.session, interaction)
-        await interaction.response.edit_message(
-            content="✅ Show added successfully.",
-            embed=None,
-            view=None
+        await interaction.followup.send(
+            "✅ Show added successfully.",
+            ephemeral=True
         )
-        # NEW: start announcement flow after insert
         ann_session = self.cog.create_announcement_session_from_show(self.session)
         await self.cog.start_announcement_flow(interaction, ann_session)
         self.cog.end_session(self.session.user_id)
@@ -524,6 +527,8 @@ class UpcomingShowsPagination(discord.ui.View):
             embeds=new_view.get_page_embeds(),
             view=new_view
         )
+# PART 3 — main cog, announcement helpers, DB ops, commands, setup
+
 # ============================================================
 #   MAIN COG
 # ============================================================
@@ -585,12 +590,8 @@ class UpcomingShows(commands.Cog):
             color=discord.Color.gold()
         )
 
-        # Header lines (bold)
-        embed.description = (
-            "**A new show was added to /upcomingshows!**\n"
-        )
+        embed.description = "**A new show was added to /upcomingshows!**\n"
 
-        # Discount line (bold)
         if ann_session.percent and ann_session.price_condition:
             if ann_session.price_condition.lower() == "any purchase":
                 if ann_session.discount_code:
@@ -615,7 +616,6 @@ class UpcomingShows(commands.Cog):
                         f"**Attend this show to receive {ann_session.percent}% off cards ${cap} or less.**\n"
                     )
 
-        # Standard show info
         embed.add_field(name="Date", value=ann_session.date or "N/A", inline=True)
         embed.add_field(name="Time", value=ann_session.time or "N/A", inline=True)
 
@@ -628,11 +628,11 @@ class UpcomingShows(commands.Cog):
         return embed
 
     # ---------------------------------------------------------
-    # UPDATED BROADCAST — embed-only message
+    # UPDATED BROADCAST — embed-only message (NO WEBHOOK ERRORS)
     # ---------------------------------------------------------
     async def send_announcement_broadcast(self, interaction: discord.Interaction, ann_session: AnnouncementSession):
         if interaction.guild is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Announcements cannot be sent in DMs.",
                 ephemeral=True
             )
@@ -650,7 +650,7 @@ class UpcomingShows(commands.Cog):
             )
 
         if not settings or not settings["upcoming_shows_channel_id"]:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Upcoming shows channel is not set. Please configure it in /botsettings.",
                 ephemeral=True
             )
@@ -659,6 +659,7 @@ class UpcomingShows(commands.Cog):
 
         channel_id = settings["upcoming_shows_channel_id"]
         channel = interaction.guild.get_channel(channel_id)
+
         if channel is None:
             try:
                 channel = await self.bot.fetch_channel(channel_id)
@@ -666,23 +667,23 @@ class UpcomingShows(commands.Cog):
                 channel = None
 
         if channel is None:
-            await interaction.response.send_message(
+            await interaction.followup.send(
                 "Upcoming shows channel could not be found. Please verify upcoming_shows_channel_id.",
                 ephemeral=True
             )
             self.end_announcement_session(ann_session.user_id)
             return
 
-        # NEW: embed-only message (no text content)
         embed = self.build_announcement_embed(ann_session)
         await channel.send(embed=embed)
 
-        await interaction.response.edit_message(
-            content="✅ Announcement sent.",
-            embed=None,
-            view=None
+        await interaction.followup.send(
+            "✅ Announcement sent.",
+            ephemeral=True
         )
+
         self.end_announcement_session(ann_session.user_id)
+
     # ---------------------------------------------------------
     # DATE VALIDATION (OPTION C — Flexible Parsing)
     # ---------------------------------------------------------
@@ -720,7 +721,7 @@ class UpcomingShows(commands.Cog):
         return embed
 
     # ---------------------------------------------------------
-    # INSERT SHOW — NOW WITH EMBEDDED DATE ERROR
+    # INSERT SHOW — NOW WITH EMBEDDED DATE ERROR (SAFE INTERACTION)
     # ---------------------------------------------------------
     async def insert_show_into_db(self, session, interaction):
 
@@ -734,7 +735,7 @@ class UpcomingShows(commands.Cog):
                 description=str(e),
                 color=discord.Color.red()
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         query = """
@@ -943,7 +944,7 @@ class UpcomingShows(commands.Cog):
         )
 
     # ---------------------------------------------------------
-    # UPDATE SHOW — NOW WITH EMBEDDED DATE ERROR
+    # UPDATE SHOW — NOW WITH EMBEDDED DATE ERROR (SAFE INTERACTION)
     # ---------------------------------------------------------
     async def update_show_into_db(self, session, interaction):
 
@@ -957,7 +958,7 @@ class UpcomingShows(commands.Cog):
                 description=str(e),
                 color=discord.Color.red()
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed, ephemeral=True)
             return
 
         query = """
@@ -1052,3 +1053,5 @@ class StartWizardView(discord.ui.View):
 # ============================================================
 async def setup(bot):
     await bot.add_cog(UpcomingShows(bot))
+
+
