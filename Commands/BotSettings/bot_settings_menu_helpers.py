@@ -167,9 +167,9 @@ async def set_singles_role(interaction: discord.Interaction, role: discord.Role)
 
 
 # ---------------------------------------------------------
-# SET SINGLES CHANNEL (UPDATED)
+# SET SINGLES CHANNEL (NOW MATCHES WELCOME CHANNEL)
 # ---------------------------------------------------------
-async def set_singles_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+async def set_singles_channel(interaction: discord.Interaction):
     await _send_channel_setter(
         interaction,
         column_name="singles_channel_id",
@@ -179,9 +179,9 @@ async def set_singles_channel(interaction: discord.Interaction, channel: discord
 
 
 # ---------------------------------------------------------
-# SET UPCOMING SHOWS CHANNEL (UPDATED)
+# SET UPCOMING SHOWS CHANNEL (NOW MATCHES WELCOME CHANNEL)
 # ---------------------------------------------------------
-async def set_upcoming_shows_channel(interaction: discord.Interaction, channel: discord.TextChannel):
+async def set_upcoming_shows_channel(interaction: discord.Interaction):
     await _send_channel_setter(
         interaction,
         column_name="upcoming_shows_channel_id",

@@ -58,179 +58,12 @@ class BotSettingsMenu(commands.Cog):
                 elif choice == "announcement_channel":
                     await set_announcement_channel(inner_interaction)
 
+                # ✅ NOW MATCHES WELCOME CHANNEL BEHAVIOR (ONE CLICK)
                 elif choice == "singles_channel":
-
-                    # -----------------------------
-                    # CATEGORY → CHANNEL SELECTOR (max 25 each)
-                    # -----------------------------
-                    class CategorySelect(discord.ui.Select):
-                        def __init__(self):
-                            categories = inner_interaction.guild.categories[:25]
-
-                            if not categories:
-                                options = [
-                                    discord.SelectOption(label="All Channels", value="__ALL__")
-                                ]
-                            else:
-                                options = [
-                                    discord.SelectOption(label=c.name, value=str(c.id))
-                                    for c in categories
-                                ]
-
-                            super().__init__(
-                                placeholder="Select a category",
-                                options=options
-                            )
-
-                        async def callback(self, category_interaction: discord.Interaction):
-                            selected = self.values[0]
-
-                            class ChannelSelect(discord.ui.Select):
-                                def __init__(self):
-                                    if selected == "__ALL__":
-                                        channels = inner_interaction.guild.text_channels
-                                    else:
-                                        category_id = int(selected)
-                                        category = inner_interaction.guild.get_channel(category_id)
-                                        channels = category.text_channels if category else []
-
-                                    channels = channels[:25]
-
-                                    options = [
-                                        discord.SelectOption(label=ch.name, value=str(ch.id))
-                                        for ch in channels
-                                    ]
-
-                                    super().__init__(
-                                        placeholder="Select the Singles notification channel",
-                                        options=options
-                                    )
-
-                                async def callback(self, channel_interaction: discord.Interaction):
-                                    channel_id = int(self.values[0])
-                                    channel = channel_interaction.guild.get_channel(channel_id)
-                                    await set_singles_channel(channel_interaction, channel)
-
-                            class ChannelSelectView(discord.ui.View):
-                                def __init__(self):
-                                    super().__init__(timeout=120)
-                                    self.add_item(ChannelSelect())
-
-                            embed = discord.Embed(
-                                title="Select Singles Notification Channel",
-                                description="Choose which channel should receive Singles notifications.",
-                                color=discord.Color.blurple()
-                            )
-
-                            await category_interaction.response.send_message(
-                                embed=embed,
-                                view=ChannelSelectView(),
-                                ephemeral=True
-                            )
-
-                    class CategorySelectView(discord.ui.View):
-                        def __init__(self):
-                            super().__init__(timeout=120)
-                            self.add_item(CategorySelect())
-
-                    embed = discord.Embed(
-                        title="Select Category",
-                        description="Choose a category to browse its channels.",
-                        color=discord.Color.blurple()
-                    )
-
-                    await inner_interaction.response.send_message(
-                        embed=embed,
-                        view=CategorySelectView(),
-                        ephemeral=True
-                    )
+                    await set_singles_channel(inner_interaction)
 
                 elif choice == "upcoming_shows_channel":
-
-                    # -----------------------------
-                    # CATEGORY → CHANNEL SELECTOR (same as singles)
-                    # -----------------------------
-                    class CategorySelect(discord.ui.Select):
-                        def __init__(self):
-                            categories = inner_interaction.guild.categories[:25]
-
-                            if not categories:
-                                options = [
-                                    discord.SelectOption(label="All Channels", value="__ALL__")
-                                ]
-                            else:
-                                options = [
-                                    discord.SelectOption(label=c.name, value=str(c.id))
-                                    for c in categories
-                                ]
-
-                            super().__init__(
-                                placeholder="Select a category",
-                                options=options
-                            )
-
-                        async def callback(self, category_interaction: discord.Interaction):
-                            selected = self.values[0]
-
-                            class ChannelSelect(discord.ui.Select):
-                                def __init__(self):
-                                    if selected == "__ALL__":
-                                        channels = inner_interaction.guild.text_channels
-                                    else:
-                                        category_id = int(selected)
-                                        category = inner_interaction.guild.get_channel(category_id)
-                                        channels = category.text_channels if category else []
-
-                                    channels = channels[:25]
-
-                                    options = [
-                                        discord.SelectOption(label=ch.name, value=str(ch.id))
-                                        for ch in channels
-                                    ]
-
-                                    super().__init__(
-                                        placeholder="Select the Upcoming Shows channel",
-                                        options=options
-                                    )
-
-                                async def callback(self, channel_interaction: discord.Interaction):
-                                    channel_id = int(self.values[0])
-                                    channel = channel_interaction.guild.get_channel(channel_id)
-                                    await set_upcoming_shows_channel(channel_interaction, channel)
-
-                            class ChannelSelectView(discord.ui.View):
-                                def __init__(self):
-                                    super().__init__(timeout=120)
-                                    self.add_item(ChannelSelect())
-
-                            embed = discord.Embed(
-                                title="Select Upcoming Shows Channel",
-                                description="Choose which channel should receive upcoming show announcements.",
-                                color=discord.Color.blurple()
-                            )
-
-                            await category_interaction.response.send_message(
-                                embed=embed,
-                                view=ChannelSelectView(),
-                                ephemeral=True
-                            )
-
-                    class CategorySelectView(discord.ui.View):
-                        def __init__(self):
-                            super().__init__(timeout=120)
-                            self.add_item(CategorySelect())
-
-                    embed = discord.Embed(
-                        title="Select Category",
-                        description="Choose a category to browse its channels.",
-                        color=discord.Color.blurple()
-                    )
-
-                    await inner_interaction.response.send_message(
-                        embed=embed,
-                        view=CategorySelectView(),
-                        ephemeral=True
-                    )
+                    await set_upcoming_shows_channel(inner_interaction)
 
                 # ---------------------------------------------------------
                 # NON-CHANNEL SETTINGS
@@ -240,9 +73,6 @@ class BotSettingsMenu(commands.Cog):
 
                 elif choice == "singles_role":
 
-                    # -----------------------------
-                    # ROLE SELECTOR DROPDOWN
-                    # -----------------------------
                     class RoleSelect(discord.ui.Select):
                         def __init__(self):
                             options = []
