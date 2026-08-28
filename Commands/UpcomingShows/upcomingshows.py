@@ -5,6 +5,17 @@ from io import BytesIO
 from datetime import datetime
 import re
 
+from .upcoming_show_announcements import (
+    AnnouncementSession,
+    AnnouncementStartView,
+    PreviewAnnouncementView,
+    EditAnnouncementFieldsView,
+    DiscountOfferView,
+    DiscountCodeView,
+    DiscountPercentView,
+    DiscountScopeView,
+)
+
 # ============================================================
 #   WIZARD SESSION STORAGE
 # ============================================================
@@ -346,6 +357,9 @@ class PreviewView(discord.ui.View):
                 embed=None,
                 view=None
             )
+            # NEW: start announcement flow after update
+            ann_session = self.cog.create_announcement_session_from_show(self.session)
+            await self.cog.start_announcement_flow(interaction, ann_session)
             self.cog.end_session(self.session.user_id)
             return
 
@@ -356,6 +370,9 @@ class PreviewView(discord.ui.View):
             embed=None,
             view=None
         )
+        # NEW: start announcement flow after insert
+        ann_session = self.cog.create_announcement_session_from_show(self.session)
+        await self.cog.start_announcement_flow(interaction, ann_session)
         self.cog.end_session(self.session.user_id)
 
     @discord.ui.button(label="Cancel", style=discord.ButtonStyle.danger)
@@ -514,6 +531,7 @@ class UpcomingShows(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.sessions = {}
+        self.announcement_sessions = {}
 
         self.admin_group = app_commands.Group(
             name="adminshows",
@@ -529,6 +547,142 @@ class UpcomingShows(commands.Cog):
     def end_session(self, user_id):
         self.sessions.pop(user_id, None)
 
+    # ---------------------------------------------------------
+    # Announcement helpers
+    # ---------------------------------------------------------
+    def create_announcement_session_from_show(self, show_session: ShowWizardSession):
+        ann = AnnouncementSession(show_session.user_id)
+        ann.show_name = show_session.show_name
+        ann.date = show_session.date
+        ann.time = show_session.time
+        ann.address = show_session.address
+        ann.city = show_session.city
+        ann.state = show_session.state
+        ann.zipcode = show_session.zipcode
+        ann.flyer_url = show_session.flyer_url
+        self.announcement_sessions[show_session.user_id] = ann
+        return ann
+
+    def get_announcement_session(self, user_id):
+        return self.announcement_sessions.get(user_id)
+
+    def end_announcement_session(self, user_id):
+        self.announcement_sessions.pop(user_id, None)
+
+    async def start_announcement_flow(self, interaction: discord.Interaction, ann_session: AnnouncementSession):
+        await interaction.followup.send(
+            "Would you like to send an announcement for this show?",
+            view=AnnouncementStartView(self, ann_session),
+            ephemeral=True
+        )
+
+    # ---------------------------------------------------------
+    # UPDATED EMBED BUILDER (embed-only announcement)
+    # ---------------------------------------------------------
+    def build_announcement_embed(self, ann_session: AnnouncementSession):
+        embed = discord.Embed(
+            title=ann_session.show_name or "Upcoming Show",
+            color=discord.Color.gold()
+        )
+
+        # Header lines (bold)
+        embed.description = (
+            "**A new show was added to /upcomingshows!**\n"
+        )
+
+        # Discount line (bold)
+        if ann_session.percent and ann_session.price_condition:
+            if ann_session.price_condition.lower() == "any purchase":
+                if ann_session.discount_code:
+                    embed.description += (
+                        f"**Attend this show and mention discount code {ann_session.discount_code} "
+                        f"to receive {ann_session.percent}% off any purchase.**\n"
+                    )
+                else:
+                    embed.description += (
+                        f"**Attend this show to receive {ann_session.percent}% off any purchase.**\n"
+                    )
+            else:
+                match = re.search(r"\$?(\d+)", ann_session.price_condition)
+                cap = match.group(1) if match else ""
+                if ann_session.discount_code:
+                    embed.description += (
+                        f"**Attend this show and mention discount code {ann_session.discount_code} "
+                        f"to receive {ann_session.percent}% off cards ${cap} or less.**\n"
+                    )
+                else:
+                    embed.description += (
+                        f"**Attend this show to receive {ann_session.percent}% off cards ${cap} or less.**\n"
+                    )
+
+        # Standard show info
+        embed.add_field(name="Date", value=ann_session.date or "N/A", inline=True)
+        embed.add_field(name="Time", value=ann_session.time or "N/A", inline=True)
+
+        full_address = f"{ann_session.address}, {ann_session.city}, {ann_session.state} {ann_session.zipcode}"
+        embed.add_field(name="Address", value=full_address, inline=False)
+
+        if ann_session.flyer_url:
+            embed.set_image(url=ann_session.flyer_url)
+
+        return embed
+
+    # ---------------------------------------------------------
+    # UPDATED BROADCAST — embed-only message
+    # ---------------------------------------------------------
+    async def send_announcement_broadcast(self, interaction: discord.Interaction, ann_session: AnnouncementSession):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "Announcements cannot be sent in DMs.",
+                ephemeral=True
+            )
+            self.end_announcement_session(ann_session.user_id)
+            return
+
+        async with self.bot.db.acquire() as conn:
+            settings = await conn.fetchrow(
+                """
+                SELECT upcoming_shows_channel_id
+                FROM guild_settings
+                WHERE guild_id = $1;
+                """,
+                interaction.guild.id
+            )
+
+        if not settings or not settings["upcoming_shows_channel_id"]:
+            await interaction.response.send_message(
+                "Upcoming shows channel is not set. Please configure it in /botsettings.",
+                ephemeral=True
+            )
+            self.end_announcement_session(ann_session.user_id)
+            return
+
+        channel_id = settings["upcoming_shows_channel_id"]
+        channel = interaction.guild.get_channel(channel_id)
+        if channel is None:
+            try:
+                channel = await self.bot.fetch_channel(channel_id)
+            except Exception:
+                channel = None
+
+        if channel is None:
+            await interaction.response.send_message(
+                "Upcoming shows channel could not be found. Please verify upcoming_shows_channel_id.",
+                ephemeral=True
+            )
+            self.end_announcement_session(ann_session.user_id)
+            return
+
+        # NEW: embed-only message (no text content)
+        embed = self.build_announcement_embed(ann_session)
+        await channel.send(embed=embed)
+
+        await interaction.response.edit_message(
+            content="✅ Announcement sent.",
+            embed=None,
+            view=None
+        )
+        self.end_announcement_session(ann_session.user_id)
     # ---------------------------------------------------------
     # DATE VALIDATION (OPTION C — Flexible Parsing)
     # ---------------------------------------------------------
@@ -898,4 +1052,3 @@ class StartWizardView(discord.ui.View):
 # ============================================================
 async def setup(bot):
     await bot.add_cog(UpcomingShows(bot))
-

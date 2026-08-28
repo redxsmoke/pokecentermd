@@ -223,7 +223,7 @@ async def on_member_join(member: discord.Member):
         "• **/sellyourcards** – send us cards you'd like to offload\n"
         "• **/buyingguide** – view our current buying rates\n"
         "• **/myorders** – view your past orders\n"
-        "• **/mywishlist add/remove/list** – Manage your wish list. Get alerts for new singles that match your wish list!\n"
+        "• **/mywishlist** – Add, view, and remove items to your wish list. Get alerts for new singles that match your wish list!\n"
         "• **/catchpokemon** – Earn rewards by catching pokemon!\n"
         "• **/daily** – Earn rewards by checking in daily\n"
         "• **/mybadges** – View your badges\n"
@@ -250,14 +250,21 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
     embed.add_field(name="📦 /myorders", value="View your past orders.", inline=False)
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
-    embed.add_field(name="✨ /mywishlist add/remove/list", value="Manage your wish list. Get alerts for new singles that match your wish list!", inline=False)
+    embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list. Get alerts for new singles that match your wish list!", inline=False)
     embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
     embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
     embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
     embed.add_field(name="👤 /userbadges", value="View other server members' badges", inline=False)
     embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
 
+    embed.add_field(
+        name="**Troubleshooting:**",
+        value="If you receive this error ⚠️ **An internal error occurred while processing this command**, make sure you are **not running the command inside a direct message**. Run it again inside the Discord server.",
+        inline=False
+    )
+
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 
 bot.run(TOKEN)
