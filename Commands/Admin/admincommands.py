@@ -6,6 +6,8 @@ from Commands.Admin.inventory_csv_import import InventoryCSVImport
 from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
+from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
+
 
 # Batch upload
 from Commands.Admin.batch_image_upload import batch_image_upload
@@ -33,14 +35,55 @@ from Commands.Admin.wishlist_dashboard import (
     WishlistDetailsSelect
 )
 
+import discord
+from discord.ext import commands
+import shop_state
+
+from Commands.Admin.inventory_csv_import import InventoryCSVImport
+from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
+from Commands.Admin.update_single_wizard import start_update_single_wizard
+from Commands.Admin.manageorders import start_manage_orders
+
+# Batch upload
+from Commands.Admin.batch_image_upload import batch_image_upload
+
+# Inventory update/delete flows
+from Commands.Admin.inventory_update_single import (
+    start_update_single_flow,
+    start_update_single_flow_with_id
+)
+
+from Commands.Admin.inventory_delete_single import (
+    start_delete_single_flow,
+    start_delete_single_flow_with_id
+)
+
+from Commands.BotSettings.bot_settings_menu import BotSettingsMenu
+
+from Commands.BotSettings.set_singles_role_slash import (
+    set_singles_role_callback,
+    singles_role_autocomplete
+)
+
+from Commands.Admin.wishlist_dashboard import (
+    WishlistDashboardView,
+    WishlistDetailsSelect
+)
+
+# ⭐ NEW IMPORT — Claim Sale Wizard
+from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
+
+
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+        # ⭐ MAKE ADMIN GROUP GUILD-ONLY
         self.admin_group = discord.app_commands.Group(
             name="admin",
             description="Admin-only commands for managing the shop.",
-            default_permissions=discord.Permissions(administrator=True)
+            default_permissions=discord.Permissions(administrator=True),
+            guild_only=True  # <-- THIS hides the entire group in DMs
         )
 
     async def cog_load(self):
@@ -53,30 +96,35 @@ class AdminCommands(commands.Cog):
             description="Close the shop with a selected reason.",
             callback=self.closeshop
         )
+        closeshop_cmd.guild_only = True  # <-- DM hidden
 
         openshop_cmd = discord.app_commands.Command(
             name="openshop",
             description="Open the shop again.",
             callback=self.openshop
         )
+        openshop_cmd.guild_only = True
 
         manage_inventory_cmd = discord.app_commands.Command(
             name="manage_inventory",
             description="Manage inventory (add/update/delete).",
             callback=self.manage_inventory
         )
+        manage_inventory_cmd.guild_only = True
 
         manage_orders_cmd = discord.app_commands.Command(
             name="manage_orders",
             description="Manage orders by status.",
             callback=self.manage_orders
         )
+        manage_orders_cmd.guild_only = True
 
         update_single_cmd = discord.app_commands.Command(
             name="update_single",
             description="Search for a card by Pokémon name.",
             callback=self.update_single
         )
+        update_single_cmd.guild_only = True
         update_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
         activate_single_cmd = discord.app_commands.Command(
@@ -84,6 +132,7 @@ class AdminCommands(commands.Cog):
             description="Reactivate a hidden inventory item.",
             callback=self.activate_single
         )
+        activate_single_cmd.guild_only = True
         activate_single_cmd.autocomplete("card")(self.inactive_inventory_autocomplete)
 
         deactivate_single_cmd = discord.app_commands.Command(
@@ -91,6 +140,7 @@ class AdminCommands(commands.Cog):
             description="Hide an inventory item so it no longer appears in update_single.",
             callback=self.deactivate_single
         )
+        deactivate_single_cmd.guild_only = True
         deactivate_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
         delete_single_cmd = discord.app_commands.Command(
@@ -98,6 +148,7 @@ class AdminCommands(commands.Cog):
             description="Permanently delete a card from inventory.",
             callback=self.delete_single
         )
+        delete_single_cmd.guild_only = True
         delete_single_cmd.autocomplete("card")(self.all_inventory_autocomplete)
 
         set_singles_role_cmd = discord.app_commands.Command(
@@ -105,29 +156,29 @@ class AdminCommands(commands.Cog):
             description="Set the Singles notification role (admin only).",
             callback=set_singles_role_callback
         )
+        set_singles_role_cmd.guild_only = True
         set_singles_role_cmd.autocomplete("role")(singles_role_autocomplete)
-        self.admin_group.add_command(set_singles_role_cmd)
 
         bot_settings_cmd = discord.app_commands.Command(
             name="bot_settings",
             description="Configure bot settings.",
             callback=self.bot_settings
         )
+        bot_settings_cmd.guild_only = True
 
         wishlist_dashboard_cmd = discord.app_commands.Command(
             name="wishlist_dashboard",
             description="Admin-only: View wishlist dashboard.",
             callback=self.wishlist_dashboard
         )
+        wishlist_dashboard_cmd.guild_only = True
 
-        # -----------------------------
-        # Batch upload
-        # -----------------------------
         batch_upload_cmd = discord.app_commands.Command(
             name="batch_image_upload",
             description="Batch upload images for cards missing images.",
             callback=batch_image_upload
         )
+        batch_upload_cmd.guild_only = True
 
         # -----------------------------
         # Register commands
@@ -141,22 +192,19 @@ class AdminCommands(commands.Cog):
         self.admin_group.add_command(deactivate_single_cmd)
         self.admin_group.add_command(delete_single_cmd)
         self.admin_group.add_command(wishlist_dashboard_cmd)
-
-        # NEW — bot settings dropdown
         self.admin_group.add_command(bot_settings_cmd)
-
-        # Batch upload
         self.admin_group.add_command(batch_upload_cmd)
 
         # Add group to bot
         self.bot.tree.add_command(self.admin_group)
+
+
     # ---------------------------------------------------------
     # BOT SETTINGS DROPDOWN HANDLER
     # ---------------------------------------------------------
     async def bot_settings(self, interaction: discord.Interaction):
         menu = BotSettingsMenu(self.bot)
         await menu.bot_settings(interaction)
-
     # ---------------------------------------------------------
     # AUTOCOMPLETE — ACTIVE CARDS ONLY
     # ---------------------------------------------------------

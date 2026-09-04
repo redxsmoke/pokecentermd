@@ -38,10 +38,10 @@ async def batch_image_upload(interaction: discord.Interaction):
     await interaction.response.defer(ephemeral=True)
 
     # ---------------------------------------------------------
-    # 1. Query cards missing images
+    # 1. Query ALL cards missing images
     # ---------------------------------------------------------
     async with interaction.client.db.acquire() as conn:
-        rows = await conn.fetch(
+        all_rows = await conn.fetch(
             """
             SELECT inventory_id, pokemon_name, series, set_name,
                    card_number, variant, price, rarity,
@@ -57,20 +57,23 @@ async def batch_image_upload(interaction: discord.Interaction):
             interaction.guild.id
         )
 
-    if len(rows) < 6:
-        embed = discord.Embed(
-            title="Batch Image Upload",
-            description="Not enough cards without images. At least 6 are required.",
-            color=discord.Color.red()
+    total_missing = len(all_rows)
+
+    if total_missing == 0:
+        await interaction.followup.send(
+            "All cards already have images. Nothing to upload.",
+            ephemeral=True
         )
-        await interaction.followup.send(embed=embed, ephemeral=True)
         return
 
-    batch_rows = rows[:6]
+    # ---------------------------------------------------------
+    # PROCESS ONLY ONE BATCH PER RUN (FIX)
+    # ---------------------------------------------------------
+    batch_rows = all_rows[:6]
     inventory_ids = [r["inventory_id"] for r in batch_rows]
 
     # ---------------------------------------------------------
-    # 2. Show the 6 cards
+    # 2. Show the cards in this batch
     # ---------------------------------------------------------
     embeds = []
     for row in batch_rows:
@@ -92,13 +95,12 @@ async def batch_image_upload(interaction: discord.Interaction):
     instruction_embed = discord.Embed(
         title="Batch Image Upload",
         description=(
-            "You will now upload **6 images one at a time**.\n\n"
-            "I will prompt you for each image:\n"
-            "• Image 1 → Card 1\n"
-            "• Image 2 → Card 2\n"
-            "• ...\n"
-            "• Image 6 → Card 6\n\n"
-            "This guarantees correct ordering."
+            f"You have **{total_missing} cards** missing images.\n\n"
+            f"This batch will upload **{len(batch_rows)} images**.\n"
+            "Run the command again to continue uploading remaining cards.\n\n"
+            "You will now upload images one at a time:\n"
+            + "\n".join([f"• Image {i+1} → Card {i+1}" for i in range(len(batch_rows))])
+            + "\n\nThis guarantees correct ordering."
         ),
         color=discord.Color.blue()
     )
@@ -109,16 +111,18 @@ async def batch_image_upload(interaction: discord.Interaction):
     )
 
     # ---------------------------------------------------------
-    # 3. Collect 6 images one-by-one (FIXED)
+    # 3. Collect images one-by-one
     # ---------------------------------------------------------
     image_urls = []
 
-    for i in range(6):
+    for i in range(len(batch_rows)):
         prompt = discord.Embed(
-            title=f"Upload Image {i+1}/6",
-            description=f"Please upload **image #{i+1}** now.\n\n"
-                        f"This image will be assigned to:\n"
-                        f"**{batch_rows[i]['pokemon_name']} — {batch_rows[i]['set_name']}**",
+            title=f"Upload Image {i+1}/{len(batch_rows)}",
+            description=(
+                f"Please upload **image #{i+1}** now.\n\n"
+                f"This image will be assigned to:\n"
+                f"**{batch_rows[i]['pokemon_name']} — {batch_rows[i]['set_name']}**"
+            ),
             color=discord.Color.blurple()
         )
 
@@ -144,23 +148,20 @@ async def batch_image_upload(interaction: discord.Interaction):
 
         attachment = msg.attachments[0]
 
-        # ⭐ FIX: Use original CDN URL — DO NOT re-upload
-        url = attachment.url
-
-        # ⭐ DO NOT DELETE THE MESSAGE — deleting it deletes the CDN file
-        # (This was the cause of disappearing images)
+        # ⭐ FIX: Convert expiring CDN link → permanent CDN link
+        url = attachment.url.split("?")[0]
 
         image_urls.append(url)
 
         progress = discord.Embed(
             title="Image Received",
-            description=f"Image {i+1}/6 uploaded successfully.",
+            description=f"Image {i+1}/{len(batch_rows)} uploaded successfully.",
             color=discord.Color.green()
         )
         await interaction.followup.send(embed=progress, ephemeral=True)
 
     # ---------------------------------------------------------
-    # 4. Build confirmation embeds (SAFE)
+    # 4. Preview confirmation
     # ---------------------------------------------------------
     confirm_embeds = []
     for row, url in zip(batch_rows, image_urls):
@@ -169,7 +170,7 @@ async def batch_image_upload(interaction: discord.Interaction):
         title = f"{row['pokemon_name']} #{card_number} — {set_display}"
 
         embed = discord.Embed(title=title, color=discord.Color.green())
-        embed.set_thumbnail(url=url)  # SAFE — original CDN URL
+        embed.set_thumbnail(url=url)
         graded_text = "Yes" if row["graded"] else "No"
         embed.description = (
             "__**Card Details (Preview with Image)**__\n\n"
@@ -183,7 +184,7 @@ async def batch_image_upload(interaction: discord.Interaction):
     view = BatchImageConfirmView(interaction.client, inventory_ids, image_urls)
 
     await interaction.followup.send(
-        content="Review the images below. Confirm to save or Cancel to discard.",
+        content="Review this batch. Confirm to save or Cancel to discard.",
         embeds=confirm_embeds,
         view=view,
         ephemeral=True
@@ -191,7 +192,7 @@ async def batch_image_upload(interaction: discord.Interaction):
 
 
 # ---------------------------------------------------------
-# CONFIRMATION VIEW (UPDATED)
+# CONFIRMATION VIEW
 # ---------------------------------------------------------
 class BatchImageConfirmView(discord.ui.View):
     def __init__(self, bot, inventory_ids, image_urls):
@@ -205,11 +206,9 @@ class BatchImageConfirmView(discord.ui.View):
 
         await interaction.response.defer()
 
-        # Disable buttons
         for child in self.children:
             child.disabled = True
 
-        # Save images to DB
         async with self.bot.db.acquire() as conn:
             for inv_id, url in zip(self.inventory_ids, self.image_urls):
                 await conn.execute(
@@ -223,11 +222,10 @@ class BatchImageConfirmView(discord.ui.View):
                     url
                 )
 
-        # Edit message
         try:
             await interaction.followup.edit_message(
                 interaction.message.id,
-                content="✅ Images saved successfully.",
+                content="✅ Images saved successfully.\nRun `/admin batch_image_upload` again to add more.",
                 view=None,
                 embeds=[]
             )

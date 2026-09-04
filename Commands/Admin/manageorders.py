@@ -3,6 +3,7 @@ from discord.ext import commands
 import datetime
 
 
+
 # =====================================================================
 # HELPERS
 # =====================================================================
@@ -223,6 +224,28 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
 
     async def on_submit(self, interaction: discord.Interaction):
         async with interaction.client.db.acquire() as conn:
+            # --- RESTORE INVENTORY FOR THIS ORDER ---
+            items = await conn.fetch(
+                """
+                SELECT inventory_id, quantity
+                FROM order_items
+                WHERE order_id = $1;
+                """,
+                self.order["order_id"]
+            )
+
+            for item in items:
+                await conn.execute(
+                    """
+                    UPDATE inventory
+                    SET quantity_available = quantity_available + $2
+                    WHERE inventory_id = $1;
+                    """,
+                    item["inventory_id"],
+                    item["quantity"]
+                )
+
+            # --- UPDATE ORDER STATUS ---
             await conn.execute(
                 """
                 UPDATE orders
@@ -254,12 +277,110 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 title="Order Cancelled",
                 description=(
                     f"Order #{self.order['order_id']} has been cancelled.\n"
-                    f"Buyer has been notified via DM."
+                    f"Buyer has been notified via DM and the items have automatically been added back into your inventory."
                 ),
                 color=discord.Color.green()
             ),
             ephemeral=True
         )
+
+
+# =====================================================================
+# SEARCH ORDER MODAL (NEW)
+# =====================================================================
+class SearchOrderModal(discord.ui.Modal, title="Search Order by ID"):
+    order_id = discord.ui.TextInput(
+        label="Enter Order ID",
+        placeholder="Example: 123",
+        required=True,
+        style=discord.TextStyle.short
+    )
+
+    def __init__(self, parent_view):
+        super().__init__()
+        self.parent_view = parent_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            order_id = int(self.order_id.value)
+        except ValueError:
+            await interaction.response.send_message(
+                "❌ Invalid Order ID. Must be a number.",
+                ephemeral=True
+            )
+            return
+
+        # Fetch order + items
+        async with interaction.client.db.acquire() as conn:
+            order = await conn.fetchrow(
+                """
+                SELECT
+                    o.order_id,
+                    o.user_id,
+                    o.subtotal,
+                    o.tax,
+                    o.fee,
+                    o.shipping_fee,
+                    o.total,
+                    o.payment_method,
+                    o.shipping_method,
+                    o.order_status,
+                    o.created_at,
+                    o.date_paid,
+                    o.estimated_delivery,
+                    o.date_shipped,
+                    o.tracking_number,
+                    o.reported_missing,
+                    o.date_received,
+                    o.cancelled_reason,
+                    o.buyer_name,
+                    o.shipping_address
+                FROM orders o
+                WHERE o.order_id = $1;
+                """,
+                order_id
+            )
+
+            if not order:
+                await interaction.response.send_message(
+                    f"❌ No order found with ID **{order_id}**.",
+                    ephemeral=True
+                )
+                return
+
+            items = await conn.fetch(
+                """
+                SELECT
+                    oi.inventory_id,
+                    oi.quantity,
+                    oi.price_each,
+                    i.pokemon_name,
+                    i.condition,
+                    i.series,
+                    i.set_name
+                FROM order_items oi
+                JOIN inventory i ON i.inventory_id = oi.inventory_id
+                WHERE oi.order_id = $1
+                ORDER BY i.pokemon_name ASC;
+                """,
+                order_id
+            )
+
+        # Convert to dict + attach items
+        order_dict = dict(order)
+        order_dict["items"] = [dict(i) for i in items]
+
+        # Replace pages with only this order
+        self.parent_view.pages = [order_dict]
+        self.parent_view.page = 0
+
+        # Build embed
+        embed = self.parent_view.build_embed_for_order(order_dict)
+
+        # Rebuild buttons for this order
+        self.parent_view.add_buttons_for_order(order_dict)
+
+        await interaction.response.edit_message(embed=embed, view=self.parent_view)
 
 
 # =====================================================================
@@ -324,6 +445,12 @@ class ManageOrdersView(discord.ui.View):
                     description="View all cancelled orders",
                     value="cancelled"
                 ),
+                # ⭐ NEW OPTION — Search by Order ID
+                discord.SelectOption(
+                    label="Search by Order ID",
+                    description="Search for a specific order",
+                    value="search"
+                ),
             ]
 
             super().__init__(
@@ -335,7 +462,15 @@ class ManageOrdersView(discord.ui.View):
             )
 
         async def callback(self, interaction: discord.Interaction):
-            self.parent_view.mode = self.values[0]
+            mode = self.values[0]
+
+            # ⭐ NEW: search mode triggers modal
+            if mode == "search":
+                await interaction.response.send_modal(SearchOrderModal(self.parent_view))
+                return
+
+            # Existing behavior
+            self.parent_view.mode = mode
             self.parent_view.page = 0
             await self.parent_view.update(interaction)
 
@@ -513,6 +648,7 @@ class ManageOrdersView(discord.ui.View):
                 "cancel_order_admin",
                 "next_order",
                 "previous_order",
+                # REMOVED: "search_order_id"
             ):
                 self.remove_item(child)
 
@@ -541,8 +677,11 @@ class ManageOrdersView(discord.ui.View):
             self.add_item(IssueRefundButton(order))
         # cancelled: no buttons
 
+        # ⭐ REMOVED: SearchOrderButton
+        # (Search is now handled via dropdown)
+
         # -----------------------------------------------------------------
-        # PAGINATION BUTTONS (NEW)
+        # PAGINATION BUTTONS
         # -----------------------------------------------------------------
         next_btn = NextOrderButton(self)
         prev_btn = PreviousOrderButton(self)
@@ -559,7 +698,7 @@ class ManageOrdersView(discord.ui.View):
 
 
 # -----------------------------------------------------------------
-# PAGINATION BUTTON CLASSES (NEW)
+# PAGINATION BUTTON CLASSES
 # -----------------------------------------------------------------
 class NextOrderButton(discord.ui.Button):
     def __init__(self, parent_view):
@@ -596,37 +735,6 @@ class PreviousOrderButton(discord.ui.Button):
 # =====================================================================
 # ACTION BUTTON CLASSES
 # =====================================================================
-class NextOrderButton(discord.ui.Button):
-    def __init__(self, parent_view):
-        super().__init__(
-            label="Next",
-            style=discord.ButtonStyle.primary,
-            custom_id="next_order",
-            row=3
-        )
-        self.parent_view = parent_view
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.parent_view.page < len(self.parent_view.pages) - 1:
-            self.parent_view.page += 1
-        await self.parent_view.update(interaction)
-
-
-class PreviousOrderButton(discord.ui.Button):
-    def __init__(self, parent_view):
-        super().__init__(
-            label="Previous",
-            style=discord.ButtonStyle.secondary,
-            custom_id="previous_order",
-            row=3
-        )
-        self.parent_view = parent_view
-
-    async def callback(self, interaction: discord.Interaction):
-        if self.parent_view.page > 0:
-            self.parent_view.page -= 1
-        await self.parent_view.update(interaction)
-
 class MarkDeliveredButton(discord.ui.Button):
     def __init__(self, order: dict):
         super().__init__(
@@ -719,7 +827,7 @@ class MarkPaidButton(discord.ui.Button):
 
         async with interaction.client.db.acquire() as conn:
 
-            # --- FETCH BUYER ID (FIX FOR KeyError) ---
+            # --- FETCH BUYER ID ---
             user_id = await conn.fetchval(
                 """
                 SELECT user_id
@@ -749,87 +857,31 @@ class MarkPaidButton(discord.ui.Button):
                 estimated_delivery
             )
 
-            # --- FETCH BADGE INFO ---
-            badge_row = await conn.fetchrow(
-                """
-                SELECT badge_id, emoji_id, badge_url
-                FROM badges
-                WHERE name = 'Purchased Card'
-                LIMIT 1;
-                """
-            )
-
-            if badge_row is None:
-                await interaction.response.send_message(
-                    "❌ Badge 'Purchased Card' does not exist in the badges table.",
-                    ephemeral=True
+        # --- SEND PAYMENT CONFIRMATION DM TO BUYER ---
+        try:
+            buyer = await interaction.client.fetch_user(user_id)
+            await buyer.send(
+                embed=discord.Embed(
+                    title="Payment Received",
+                    description=(
+                        f"Your payment for order #{self.order['order_id']} has been received.\n"
+                        f"Estimated delivery: {estimated_delivery.strftime('%Y-%m-%d')}"
+                    ),
+                    color=discord.Color.green()
                 )
-                return
-
-            badge_id = badge_row["badge_id"]
-            emoji_id = badge_row["emoji_id"]
-            badge_url = badge_row["badge_url"]
-
-            # --- CHECK IF BUYER ALREADY HAS BADGE ---
-            already_has = await conn.fetchval(
-                """
-                SELECT 1
-                FROM user_badges
-                WHERE user_id = $1 AND badge_id = $2 AND guild_id = $3
-                LIMIT 1;
-                """,
-                user_id,
-                badge_id,
-                interaction.guild.id
             )
+        except Exception as e:
+            print(f"Failed to DM buyer {user_id}: {e}")
 
-            # --- AWARD BADGE ONLY IF NOT ALREADY AWARDED ---
-            if not already_has:
-                await conn.execute(
-                    """
-                    INSERT INTO user_badges (user_id, badge_id, guild_id, awarded_at)
-                    VALUES ($1, $2, $3, NOW());
-                    """,
-                    user_id,
-                    badge_id,
-                    interaction.guild.id
-                )
-
-                # --- SEND DM TO BUYER ---
-                try:
-                    buyer = await interaction.client.fetch_user(user_id)
-
-                    dm_embed = discord.Embed(
-                        title="🎉 You Earned a Badge!",
-                        description=(
-                            "You earned the **Purchased Card** badge!\n\n"
-                            "View your badges by running **/mybadges**.\n"
-                            "To see what other badges you can unlock, "
-                            "view other guild members' badges using **/userbadges**."
-                        ),
-                        color=discord.Color.green()
-                    )
-
-                    if badge_url:
-                        dm_embed.set_thumbnail(url=badge_url)
-
-                    await buyer.send(embed=dm_embed)
-
-                except Exception as e:
-                    print(f"Failed to DM buyer {user_id}: {e}")
-
-        # --- CONFIRMATION MESSAGE TO ADMIN ---
-        admin_embed = discord.Embed(
-            title="Order Marked as Paid",
-            description=(
-                f"The buyer has been awarded the **Purchased Card** badge!\n\n<:{emoji_id}>"
-                if not already_has else
-                f"The buyer already has the **Purchased Card** badge.\n\n<:{emoji_id}>"
+        # --- ADMIN CONFIRMATION ---
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Order Marked as Paid",
+                description=f"Order #{self.order['order_id']} has been marked as paid.",
+                color=discord.Color.green()
             ),
-            color=discord.Color.green()
+            ephemeral=True
         )
-
-        await interaction.response.send_message(embed=admin_embed, ephemeral=True)
 
 
 class MarkShippedButton(discord.ui.Button):
@@ -856,22 +908,17 @@ class MarkShippedButton(discord.ui.Button):
                 self.order["order_id"]
             )
 
-            if "plain white envelope" in shipping_method:
-                await conn.execute(
-                    """
-                    UPDATE orders
-                    SET tracking_number = 'Shipped without tracking'
-                    WHERE order_id = $1;
-                    """,
-                    self.order["order_id"]
-                )
-
+        # DM buyer
         try:
             buyer = await interaction.client.fetch_user(self.order["user_id"])
             await buyer.send(
                 embed=discord.Embed(
                     title="Order Shipped",
-                    description=f"Your order #{self.order['order_id']} has been marked as shipped. Buyer has been notified via DM",
+                    description=(
+                        f"Your order #{self.order['order_id']} has been shipped.\n"
+                        f"Shipping Method: {self.order['shipping_method']}\n"
+                        f"Tracking #: {self.order['tracking_number'] or 'None'}"
+                    ),
                     color=discord.Color.green()
                 )
             )
@@ -900,6 +947,12 @@ class CancelOrderButton(discord.ui.Button):
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(AdminCancelOrderModal(self.order))
+
+
+# =====================================================================
+# REMOVED: SEARCH ORDER BUTTON
+# =====================================================================
+# (Search is now handled via dropdown option "search")
 
 
 # =====================================================================

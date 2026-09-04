@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from Commands.BotSettings.admin_channel_helpers import get_singles_role
 
 
+
 # DB imports
 from db.connection import init_db, get_pool
 
@@ -46,6 +47,8 @@ class MyBot(commands.Bot):
             "Commands.Cart.cart",
             "Commands.Orders.myorderscommand",
             "Commands.Orders.myordersview",
+            "Commands.Admin.claim_sale_wizard",
+            "Commands.Admin.claim_sale_runtime",             
             "Commands.Admin.admincommands",
             "Commands.Admin.inventory_csv_import",
             "Commands.SellCards.sellcards",
@@ -58,7 +61,8 @@ class MyBot(commands.Bot):
             "Commands.Daily.dailycommand",
             "Commands.wishlist.mywishlist",
             "Commands.SinglesRole.singlesrole",
-            "Commands.RecentlyAdded.recentlyadded" 
+            "Commands.RecentlyAdded.recentlyadded",
+            "Commands.ShippingInfo.shipping_info"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")

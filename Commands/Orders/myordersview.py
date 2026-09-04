@@ -2,6 +2,7 @@ import discord
 from discord.ext import commands
 import datetime
 
+
 # =====================================================================
 # ADMIN ORDER VIEW
 # =====================================================================
@@ -27,6 +28,21 @@ class AdminOrderView(discord.ui.View):
         No buttons. No actions. Just instructions.
         """
 
+        # ⭐ DO NOT SEND DM IF THIS ORDER IS A CLAIM SALE
+        async with self.bot.db.acquire() as conn:
+            exists = await conn.fetchval(
+                """
+                SELECT 1
+                FROM claim_sale_orders
+                WHERE order_id = $1
+                LIMIT 1;
+                """,
+                self.order_id
+            )
+
+        if exists:
+            return  # <-- STOP. Claim sale order → DO NOT SEND DM.
+
         admin = await interaction.client.fetch_user(self.admin_id)
 
         # Build item list
@@ -48,7 +64,7 @@ class AdminOrderView(discord.ui.View):
                 f"To manage this order (mark as **Paid**, **Shipped**, enter **Tracking**, cancel, etc.), "
                 f"use the command:\n"
                 f"**/admin manage_orders**\n\n"
-                f"This DM is informational only — all actions must be done using the admin command."
+                f"All actions must be done using the admin command. This DM Is informational only."
             ),
             color=discord.Color.blue()
         )
@@ -57,6 +73,8 @@ class AdminOrderView(discord.ui.View):
             await admin.send(embed=embed)
         except Exception as e:
             print("ADMIN DM ERROR:", e)
+
+
 
 # =====================================================================
 # TRACKING NUMBER MODAL
@@ -174,19 +192,6 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 )
                 return
 
-            for item in self.items:
-                await conn.execute(
-                    """
-                    UPDATE inventory
-                    SET quantity_available = quantity_available + $2,
-                        reserved = 0,
-                        reserved_until = NULL
-                    WHERE inventory_id = $1;
-                    """,
-                    item["inventory_id"],
-                    item["quantity"]
-                )
-
             await conn.execute(
                 """
                 UPDATE orders
@@ -213,7 +218,7 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
         await interaction.response.send_message(
             embed=discord.Embed(
                 title="Order Cancelled",
-                description=f"Order #{self.order_id} has been cancelled and inventory restored.",
+                description=f"Order #{self.order_id} has been cancelled.",
                 color=discord.Color.green()
             ),
             ephemeral=True
@@ -224,6 +229,7 @@ class CancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 child.disabled = True
 
         await interaction.message.edit(view=self.admin_view)
+
 # =====================================================================
 # ADMIN TRACKING RESPONSE MODAL
 # =====================================================================
@@ -323,6 +329,386 @@ class AdminNotReceivedView(discord.ui.View):
         await interaction.response.send_modal(
             AdminTrackingResponseModal(self.bot, self.order_id, self.user_id)
         )
+# =====================================================================
+# PAY CHECKOUT VIEW
+# =====================================================================
+class PayCheckoutView(discord.ui.View):
+    def __init__(self, bot, order, config):
+        super().__init__(timeout=900)
+        self.bot = bot
+        self.order = order
+        self.config = config
+        self.order["admin_id"] = config["admin_id"]
+
+        self.payment_method = None
+        self.shipping_method = None
+
+        # Payment options: venmo, cashapp, paypal
+        options = []
+        venmo = (config["venmo_handle"] or "").strip().lstrip("@")
+        cashapp = (config["cashapp_handle"] or "").strip()
+        paypal = (config["paypal_handle"] or "").strip()
+
+        if venmo:
+            options.append(discord.SelectOption(label="Venmo", value="venmo"))
+        if cashapp:
+            options.append(discord.SelectOption(label="CashApp", value="cashapp"))
+        if paypal:
+            options.append(discord.SelectOption(label="PayPal", value="paypal"))
+
+        self.payment_select = discord.ui.Select(
+            placeholder="Select Payment Method",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+        self.payment_select.callback = self.payment_callback
+
+        self.shipping_select = discord.ui.Select(
+            placeholder="Select Shipping Method",
+            options=[
+                discord.SelectOption(label="PWE ($1.50)", value="pwe"),
+                discord.SelectOption(label="Tracked ($4.95)", value="tracked")
+            ],
+            min_values=1,
+            max_values=1
+        )
+        self.shipping_select.callback = self.shipping_callback
+
+        self.add_item(self.payment_select)
+        self.add_item(self.shipping_select)
+
+        # Existing button
+        confirm_btn = discord.ui.Button(
+            label="Enter Name & Shipping Address",
+            style=discord.ButtonStyle.success
+        )
+        confirm_btn.callback = self.confirm
+        self.add_item(confirm_btn)
+
+        # ⭐ NEW BUTTON — Use Saved Shipping Address
+        saved_btn = discord.ui.Button(
+            label="Use Saved Shipping Address",
+            style=discord.ButtonStyle.primary
+        )
+        saved_btn.callback = self.use_saved_shipping
+        self.add_item(saved_btn)
+
+    async def payment_callback(self, interaction: discord.Interaction):
+        self.payment_method = self.payment_select.values[0]
+        await interaction.response.defer()
+
+    async def shipping_callback(self, interaction: discord.Interaction):
+        self.shipping_method = self.shipping_select.values[0]
+        await interaction.response.defer()
+
+    # ============================================================
+    # ⭐ NEW METHOD — Use Saved Shipping Address
+    # ============================================================
+    async def use_saved_shipping(self, interaction: discord.Interaction):
+
+        # ⭐ REQUIRE PAYMENT + SHIPPING METHOD FIRST
+        if not self.payment_method or not self.shipping_method:
+            embed = discord.Embed(
+                title="Missing Required Selections",
+                description=(
+                    "Please select both a **payment method** and a **shipping method** "
+                    "before using your saved shipping address."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Fetch saved shipping info
+        async with self.bot.db.acquire() as conn:
+            record = await conn.fetchrow(
+                """
+                SELECT full_name, street_address, city, state, zip
+                FROM user_shipping_info
+                WHERE user_id = $1 AND guild_id = $2;
+                """,
+                interaction.user.id,
+                interaction.guild.id
+            )
+
+        if record is None:
+            embed = discord.Embed(
+                title="No Saved Shipping Address",
+                description=(
+                    "You do not have a saved shipping address.\n\n"
+                    "Run the **/shippinginfo** command to provide one."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Build full address
+        full_address = (
+            f"{record['street_address']}\n"
+            f"{record['city']}, {record['state']} {record['zip']}"
+        )
+
+        # Recalculate totals
+        subtotal = float(self.order["subtotal"])
+        tax = round(subtotal * 0.06, 2)
+        total_before_shipping = subtotal + tax
+
+        # Enforce tracked shipping rule
+        if total_before_shipping > 15 and self.shipping_method == "pwe":
+            embed = discord.Embed(
+                title="Tracked Shipping Required",
+                description=(
+                    "Orders over **$15.00** require tracked shipping.\n"
+                    "Please select the **Tracked ($4.95)** shipping option to continue."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # Shipping cost
+        if self.shipping_method == "pwe":
+            shipping_cost = 1.50
+            shipping_label = "Plain White Envelope (Buyer Risk)"
+        else:
+            shipping_cost = 4.95
+            shipping_label = "Tracked Shipping"
+
+        # PayPal fee
+        fee = round(total_before_shipping * 0.03, 2) if self.payment_method == "paypal" else 0.0
+
+        total = round(total_before_shipping + shipping_cost + fee, 2)
+
+        # Payment link
+        venmo = (self.config["venmo_handle"] or "").strip().lstrip("@")
+        cashapp = (self.config["cashapp_handle"] or "").strip()
+        paypal = (self.config["paypal_handle"] or "").strip()
+
+        method = self.payment_method.lower()
+        link = None
+
+        if method == "venmo" and venmo:
+            link = f"https://venmo.com/{venmo}?txn=pay&amount={total}"
+        elif method == "cashapp" and cashapp:
+            link = f"https://cash.app/{cashapp}/{total}"
+        elif method == "paypal" and paypal:
+            link = f"https://paypal.me/{paypal}/{total}"
+
+        # Final embed to buyer
+        final_embed = discord.Embed(
+            title="Claim Sale Order Payment",
+            description=(
+                f"**Order ID:** {self.order['order_id']}\n"
+                f"**Subtotal:** ${subtotal:.2f}\n"
+                f"**Tax (6%):** ${tax:.2f}\n"
+                f"**Fee:** ${fee:.2f}\n"
+                f"**Shipping:** ${shipping_cost:.2f} — {shipping_label}\n"
+                f"**Total Due:** ${total:.2f}\n\n"
+                f"**Name:** {record['full_name']}\n"
+                f"**Address:**\n{full_address}\n\n"
+                f"**Payment Link:**\n{link or 'No payment link available.'}"
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.send_message(embed=final_embed, ephemeral=True)
+
+        # Admin DM
+        admin_id = self.order.get("admin_id")
+        if admin_id:
+            try:
+                admin = await interaction.client.fetch_user(admin_id)
+
+                admin_embed = discord.Embed(
+                    title="Buyer Submitted Payment Information",
+                    description=(
+                        f"**Buyer:** <@{self.order['user_id']}>\n"
+                        f"**Buyer Name:** {record['full_name']}\n"
+                        f"**Shipping Address:**\n{full_address}\n\n"
+                        f"**Payment Method:** {self.payment_method.capitalize()}\n"
+                        f"**Total Paid:** ${total:.2f}\n\n"
+                        f"**Next Steps:**\n"
+                        f"• Verify payment on **{self.payment_method.capitalize()}**.\n"
+                        f"• Mark the order as **Paid** using `/admin manage_orders`.\n"
+                        f"• Once shipped, mark as **Shipped** and enter tracking.\n"
+                    ),
+                    color=discord.Color.blue()
+                )
+
+                await admin.send(embed=admin_embed)
+
+            except Exception as e:
+                print(f"[CLAIM SALE][WARN] Failed to DM admin payment notice: {e}")
+
+    # ============================================================
+    # EXISTING confirm() METHOD (unchanged)
+    # ============================================================
+    async def confirm(self, interaction: discord.Interaction):
+        if not self.payment_method or not self.shipping_method:
+            await interaction.response.send_message(
+                "Please select both payment and shipping methods.",
+                ephemeral=True
+            )
+            return
+
+        subtotal = float(self.order["subtotal"])
+        tax = round(subtotal * 0.06, 2)
+        total_before_shipping = subtotal + tax
+
+        if total_before_shipping > 15 and self.shipping_method == "pwe":
+            embed = discord.Embed(
+                title="Tracked Shipping Required",
+                description=(
+                    "Orders over **$15.00** require tracked shipping.\n"
+                    "Please select the **Tracked ($4.95)** shipping option to continue."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if self.shipping_method == "pwe":
+            shipping_cost = 1.50
+            shipping_label = "Plain White Envelope (Buyer Risk)"
+        else:
+            shipping_cost = 4.95
+            shipping_label = "Tracked Shipping"
+
+        fee = round(total_before_shipping * 0.03, 2) if self.payment_method == "paypal" else 0.0
+        total = round(total_before_shipping + shipping_cost + fee, 2)
+
+        venmo = (self.config["venmo_handle"] or "").strip().lstrip("@")
+        cashapp = (self.config["cashapp_handle"] or "").strip()
+        paypal = (self.config["paypal_handle"] or "").strip()
+
+        method = self.payment_method.lower()
+        link = None
+
+        if method == "venmo" and venmo:
+            link = f"https://venmo.com/{venmo}?txn=pay&amount={total}"
+        elif method == "cashapp" and cashapp:
+            link = f"https://cash.app/{cashapp}/{total}"
+        elif method == "paypal" and paypal:
+            link = f"https://paypal.me/{paypal}/{total}"
+
+        self.payment_link = link
+        self.shipping_label = shipping_label
+        self.total = total
+
+        await interaction.response.send_modal(
+            ShippingInfoModal(
+                self.bot,
+                self.order,
+                total,
+                self.payment_method,
+                shipping_label,
+                link
+            )
+        )
+
+# =====================================================================
+# PAY CHECKOUT VIEW
+# =====================================================================
+class ShippingInfoModal(discord.ui.Modal, title="Enter Shipping Information"):
+    name = discord.ui.TextInput(label="Full Name", required=True)
+    street = discord.ui.TextInput(label="Street Address", required=True)
+    city = discord.ui.TextInput(label="City", required=True)
+    state = discord.ui.TextInput(label="State", required=True)
+    zip_code = discord.ui.TextInput(label="Zip Code", required=True)
+
+    def __init__(self, bot, order, total, payment_method, shipping_label, payment_link):
+        super().__init__()
+        self.bot = bot
+        self.order = order
+        self.total = total
+        self.payment_method = payment_method
+        self.shipping_label = shipping_label
+        self.payment_link = payment_link
+
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self.name.value
+        street = self.street.value
+        city = self.city.value
+        state = self.state.value
+        zip_code = self.zip_code.value
+
+        full_address = f"{street}\n{city}, {state} {zip_code}"
+
+        # ⭐ Save buyer name + shipping info into DB
+        async with self.bot.db.acquire() as conn:
+            await conn.execute(
+                """
+                UPDATE orders
+                SET buyer_name = $2,
+                    shipping_address = $3,
+                    shipping_method = $4,
+                    payment_method = $5
+                WHERE order_id = $1;
+                """,
+                self.order["order_id"],
+                name,
+                full_address,
+                self.shipping_label,
+                self.payment_method
+            )
+
+        # ⭐ Update order dict for immediate UI refresh
+        self.order["buyer_name"] = name
+        self.order["shipping_address"] = full_address
+        self.order["shipping_method"] = self.shipping_label
+        self.order["payment_method"] = self.payment_method
+
+        subtotal = float(self.order["subtotal"])
+        tax = round(subtotal * 0.06, 2)
+        fee = round(subtotal * 0.03, 2) if self.payment_method == "paypal" else 0.0
+        shipping_cost = 4.95 if self.shipping_label.startswith("Tracked") else 1.50
+
+        final_embed = discord.Embed(
+            title="Claim Sale Order Payment",
+            description=(
+                f"**Order ID:** {self.order['order_id']}\n"
+                f"**Subtotal:** ${subtotal:.2f}\n"
+                f"**Tax (6%):** ${tax:.2f}\n"
+                f"**Fee:** ${fee:.2f}\n"
+                f"**Shipping:** ${shipping_cost:.2f} — {self.shipping_label}\n"
+                f"**Total Due:** ${self.total:.2f}\n\n"
+                f"**Name:** {name}\n"
+                f"**Address:**\n{full_address}\n\n"
+                f"**Payment Link - CLICK HERE TO MAKE PAYMENT:**\n{self.payment_link or 'No payment link available.'}"
+            ),
+            color=discord.Color.green()
+        )
+
+        await interaction.response.send_message(embed=final_embed, ephemeral=True)
+
+        # ⭐ ADMIN PAYMENT NOTIFICATION (now includes buyer name + address)
+        admin_id = self.order.get("admin_id")
+        if admin_id:
+            try:
+                admin = await interaction.client.fetch_user(admin_id)
+
+                admin_embed = discord.Embed(
+                    title="Buyer Submitted Payment Information",
+                    description=(
+                        f"**Buyer:** <@{self.order['user_id']}>\n"
+                        f"**Buyer Name:** {name}\n"
+                        f"**Shipping Address:**\n{full_address}\n\n"
+                        f"**Payment Method:** {self.payment_method.capitalize()}\n"
+                        f"**Total Paid:** ${self.total:.2f}\n\n"
+                        f"**Next Steps:**\n"
+                        f"• Verify payment on **{self.payment_method.capitalize()}**.\n"
+                        f"• If payment is confirmed, mark the order as **Paid** using `/admin manage_orders`.\n"
+                        f"• Once shipped, mark the order as **Shipped** and enter the tracking number.\n"
+                    ),
+                    color=discord.Color.blue()
+                )
+
+                await admin.send(embed=admin_embed)
+
+            except Exception as e:
+                print(f"[CLAIM SALE][WARN] Failed to DM admin payment notice: {e}")
 
 # =====================================================================
 # BUYER BUTTON — MARK RECEIVED
@@ -360,9 +746,10 @@ class MarkReceivedButton(discord.ui.Button):
             ephemeral=True
         )
 
-        # Rebuild lists and refresh view
+        # Refresh lists and update view
         self.parent_view.refresh_order_lists()
         await self.parent_view.update(interaction)
+
 
 # =====================================================================
 # BUYER BUTTON — MARK NOT RECEIVED
@@ -477,6 +864,7 @@ class MarkNotReceivedButton(discord.ui.Button):
         except:
             pass
 
+
 # =====================================================================
 # BUYER BUTTON — PAY
 # =====================================================================
@@ -508,57 +896,34 @@ class PayButton(discord.ui.Button):
         async with self.parent_view.bot.db.acquire() as conn:
             config = await conn.fetchrow(
                 """
-                SELECT venmo_handle, cashapp_handle, paypal_handle
+                SELECT admin_id, venmo_handle, cashapp_handle, paypal_handle
                 FROM guild_settings
                 WHERE guild_id = $1;
                 """,
                 interaction.guild_id
             )
 
-        # ✅ Strip whitespace AND leading '@' from handles
-        venmo = (config["venmo_handle"] or "").strip().lstrip("@")
-        cashapp = (config["cashapp_handle"] or "").strip()
-        paypal = (config["paypal_handle"] or "").strip()
-
-        total = float(order["total"])
-        method = (order["payment_method"] or "").lower()
-
-        if method == "venmo" and venmo:
-            # ✅ Correct Venmo URL format
-            link = f"https://venmo.com/{venmo}?txn=pay&amount={total}"
-            label = "Venmo Payment Link"
-        elif method == "cashapp" and cashapp:
-            link = f"https://cash.app/{cashapp}/{total}"
-            label = "CashApp Payment Link"
-        elif method == "paypal" and paypal:
-            link = f"https://paypal.me/{paypal}/{total}"
-            label = "PayPal Payment Link"
-        else:
-            link = None
-            label = "Payment Not Configured"
-
-        if not link:
+        # If no methods configured, bail
+        if not any([
+            (config["venmo_handle"] or "").strip(),
+            (config["cashapp_handle"] or "").strip(),
+            (config["paypal_handle"] or "").strip()
+        ]):
             embed = discord.Embed(
                 title="Payment Not Configured",
-                description="This payment method is not configured for this guild.",
+                description="No payment methods are configured for this guild.",
                 color=discord.Color.red()
             )
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        embed = discord.Embed(
-            title="Complete Your Payment",
-            description=(
-                f"**Order ID:** {order['order_id']}\n"
-                f"**Total Due:** ${total:.2f}\n"
-                f"**Payment Method:** {order['payment_method'].capitalize()}\n\n"
-                f"{label}:\n{link}"
-            ),
-            color=discord.Color.green()
+        view = PayCheckoutView(self.parent_view.bot, order, config)
+
+        await interaction.response.send_message(
+            content="Select payment and shipping, then preview your total and payment link.",
+            view=view,
+            ephemeral=True
         )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 # =====================================================================
 # BUYER-FACING VIEW — ACTIVE / DELIVERED DROPDOWN
@@ -647,17 +1012,16 @@ class MyOrdersView(discord.ui.View):
         else:
             self.pages = []
 
-        if self.page >= len(self.pages):
-            self.page = 0
-
     # -----------------------------------------------------------------
     # BUYER BUTTON LOGIC
     # -----------------------------------------------------------------
     def add_buyer_buttons(self):
+        # Remove old buyer buttons
         for child in list(self.children):
             if isinstance(child, (MarkReceivedButton, MarkNotReceivedButton, PayButton)):
                 self.remove_item(child)
 
+        # Only active orders get buyer buttons
         if self.mode != "active":
             return
 
@@ -666,15 +1030,17 @@ class MyOrdersView(discord.ui.View):
 
         order = self.pages[self.page]
 
+        # Show Pay button only if unpaid and not cancelled
         if order.get("date_paid") is None and order["order_status"] != "Cancelled":
             self.add_item(PayButton(self))
 
+        # Delivered orders do not get received/not received buttons
         if order["order_status"] == "Delivered":
             return
 
+        # Add received/not received buttons
         self.add_item(MarkReceivedButton(self))
         self.add_item(MarkNotReceivedButton(self))
-
     # -----------------------------------------------------------------
     # UPDATE VIEW
     # -----------------------------------------------------------------
@@ -688,6 +1054,7 @@ class MyOrdersView(discord.ui.View):
                 color=discord.Color.blue()
             )
 
+            # Remove everything except dropdown
             for child in list(self.children):
                 if not isinstance(child, self.OrderTabDropdown):
                     self.remove_item(child)
@@ -717,6 +1084,7 @@ class MyOrdersView(discord.ui.View):
                 )
                 embed.set_footer(text="Only orders from the past 60 days are shown.")
 
+            # Remove everything except dropdown
             for child in list(self.children):
                 if not isinstance(child, self.OrderTabDropdown):
                     self.remove_item(child)
@@ -728,6 +1096,7 @@ class MyOrdersView(discord.ui.View):
         if self.page >= len(self.pages):
             self.page = 0
 
+        # Build embed using MyOrders cog builder
         embed = interaction.client.get_cog("MyOrders").build_order_embed(
             self.pages[self.page],
             self.page + 1,
@@ -741,8 +1110,17 @@ class MyOrdersView(discord.ui.View):
         else:
             embed.set_footer(text="Only active orders are displayed.")
 
-        self.add_buyer_buttons()
+        # Rebuild buttons
+        self.clear_items()
+
+        # Dropdown always first
+        self.add_item(self.OrderTabDropdown(self))
+
+        # Pagination buttons
         self.add_pagination_buttons()
+
+        # Buyer buttons
+        self.add_buyer_buttons()
 
         await interaction.response.edit_message(embed=embed, view=self)
 
@@ -751,6 +1129,7 @@ class MyOrdersView(discord.ui.View):
     # -----------------------------------------------------------------
     def add_pagination_buttons(self):
 
+        # Remove old pagination buttons
         for child in list(self.children):
             if isinstance(child, discord.ui.Button) and child.custom_id in ("previous", "next"):
                 self.remove_item(child)
@@ -788,6 +1167,10 @@ class MyOrdersView(discord.ui.View):
         self.add_item(next)
 
 
-
+# =====================================================================
+# SETUP
+# =====================================================================
 async def setup(bot):
     pass
+
+
