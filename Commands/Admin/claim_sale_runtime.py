@@ -385,80 +385,108 @@ class ClaimSaleRuntime(commands.Cog):
 
         self.claim_sale_task = self.check_claim_sales
 
+    # ============================================================
+    # ENSURE LOOP STARTS ON READY (Railway sometimes misses this)
+    # ============================================================
     @commands.Cog.listener()
     async def on_ready(self):
-        if not self.claim_sale_task.is_running():
-            print("[CLAIM SALE] Starting claim sale task loop...")
-            self.claim_sale_task.start()
+        try:
+            if not self.claim_sale_task.is_running():
+                print("[CLAIM SALE] Starting claim sale task loop...", flush=True)
+                self.claim_sale_task.start()
+        except Exception as e:
+            print("[CLAIM SALE][ERROR] Failed to start loop on_ready:", e, flush=True)
 
+    # ============================================================
+    # ENSURE LOOP RESTARTS AFTER DISCORD RECONNECT (Railway issue)
+    # ============================================================
+    @commands.Cog.listener()
+    async def on_resumed(self):
+        try:
+            if not self.claim_sale_task.is_running():
+                print("[CLAIM SALE] Resumed — restarting claim sale loop...", flush=True)
+                self.claim_sale_task.start()
+        except Exception as e:
+            print("[CLAIM SALE][ERROR] Failed to restart loop on_resumed:", e, flush=True)
+
+    # ============================================================
+    # MAIN CLAIM SALE LOOP
+    # ============================================================
     @tasks.loop(minutes=1)
     async def check_claim_sales(self):
-        now = datetime.datetime.now(self.est)
-        print(f"[CLAIM SALE LOOP] Tick at {now}")
+        try:
+            now = datetime.datetime.now(self.est)
+            print(f"[CLAIM SALE LOOP] Tick at {now}", flush=True)
 
-        async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT *
-                FROM claim_sales
-                WHERE is_ran = FALSE
-                """
-            )
+            async with self.bot.db.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT *
+                    FROM claim_sales
+                    WHERE is_ran = FALSE
+                    """
+                )
 
-        for sale in rows:
-            sale_id = sale["claim_sale_id"]
+            for sale in rows:
+                sale_id = sale["claim_sale_id"]
 
-            naive_dt = datetime.datetime.combine(
-                sale["sale_date"],
-                sale["sale_time"]
-            )
-            start_dt = self.est.localize(naive_dt)
-            delta = start_dt - now
-            print(f"[CLAIM SALE] sale_id={sale_id} start={start_dt} delta={delta}")
+                naive_dt = datetime.datetime.combine(
+                    sale["sale_date"],
+                    sale["sale_time"]
+                )
+                start_dt = self.est.localize(naive_dt)
+                delta = start_dt - now
+                print(f"[CLAIM SALE] sale_id={sale_id} start={start_dt} delta={delta}", flush=True)
 
-            if sale_id not in self.pending_sales:
-                self.pending_sales[sale_id] = {
-                    "start_dt": start_dt,
-                    "one_hour_sent": False,
-                    "ten_min_sent": False,
-                    "started": False
-                }
+                if sale_id not in self.pending_sales:
+                    self.pending_sales[sale_id] = {
+                        "start_dt": start_dt,
+                        "one_hour_sent": False,
+                        "ten_min_sent": False,
+                        "started": False
+                    }
 
-            cached = self.pending_sales[sale_id]
+                cached = self.pending_sales[sale_id]
 
-            if cached["start_dt"] != start_dt:
-                cached["start_dt"] = start_dt
-                cached["one_hour_sent"] = False
-                cached["ten_min_sent"] = False
-                cached["started"] = False
+                if cached["start_dt"] != start_dt:
+                    cached["start_dt"] = start_dt
+                    cached["one_hour_sent"] = False
+                    cached["ten_min_sent"] = False
+                    cached["started"] = False
 
-            if datetime.timedelta(minutes=0) < delta <= datetime.timedelta(hours=1):
-                if not cached["one_hour_sent"]:
-                    print(f"[CLAIM SALE] sending 1 hour warning for sale_id={sale_id}")
-                    await self.send_warning_embed(sale, start_dt, "1 hour")
-                    cached["one_hour_sent"] = True
+                if datetime.timedelta(minutes=0) < delta <= datetime.timedelta(hours=1):
+                    if not cached["one_hour_sent"]:
+                        print(f"[CLAIM SALE] sending 1 hour warning for sale_id={sale_id}", flush=True)
+                        await self.send_warning_embed(sale, start_dt, "1 hour")
+                        cached["one_hour_sent"] = True
 
-            if datetime.timedelta(minutes=0) < delta <= datetime.timedelta(minutes=10):
-                if not cached["ten_min_sent"]:
-                    print(f"[CLAIM SALE] sending 10 minute warning for sale_id={sale_id}")
-                    await self.send_warning_embed(sale, start_dt, "10 minutes")
-                    cached["ten_min_sent"] = True
+                if datetime.timedelta(minutes=0) < delta <= datetime.timedelta(minutes=10):
+                    if not cached["ten_min_sent"]:
+                        print(f"[CLAIM SALE] sending 10 minute warning for sale_id={sale_id}", flush=True)
+                        await self.send_warning_embed(sale, start_dt, "10 minutes")
+                        cached["ten_min_sent"] = True
 
-            if delta <= datetime.timedelta(seconds=0):
-                if not cached["started"]:
-                    print(f"[CLAIM SALE] starting claim sale sale_id={sale_id}")
-                    cached["started"] = True
-                    await self.start_claim_sale(sale)
+                if delta <= datetime.timedelta(seconds=0):
+                    if not cached["started"]:
+                        print(f"[CLAIM SALE] starting claim sale sale_id={sale_id}", flush=True)
+                        cached["started"] = True
+                        await self.start_claim_sale(sale)
 
+        except Exception as e:
+            print("[CLAIM SALE LOOP ERROR]", e, flush=True)
+
+    # ============================================================
+    # WARNING EMBED
+    # ============================================================
     async def send_warning_embed(self, sale_row, start_dt, window_label):
         guild = self.bot.get_guild(sale_row["guild_id"])
         if not guild:
-            print(f"[WARN] Guild {sale_row['guild_id']} not found for warning embed")
+            print(f"[WARN] Guild {sale_row['guild_id']} not found for warning embed", flush=True)
             return
 
         channel = guild.get_channel(sale_row["claim_sale_channel_id"])
         if not channel:
-            print(f"[WARN] Channel {sale_row['claim_sale_channel_id']} not found for warning embed")
+            print(f"[WARN] Channel {sale_row['claim_sale_channel_id']} not found for warning embed", flush=True)
             return
 
         number_of_cards = sale_row["number_of_cards"]
@@ -506,29 +534,36 @@ class ClaimSaleRuntime(commands.Cog):
             inline=False
         )
 
-        print(f"[CLAIM SALE] sending warning embed to channel {channel.id} for sale {sale_row['claim_sale_id']}")
-        await channel.send(embed=embed)
+        print(f"[CLAIM SALE] sending warning embed to channel {channel.id} for sale {sale_row['claim_sale_id']}", flush=True)
 
+        try:
+            await channel.send(embed=embed)
+        except Exception as e:
+            print("[CLAIM SALE][ERROR] Failed to send warning embed:", e, flush=True)
+
+    # ============================================================
+    # START CLAIM SALE
+    # ============================================================
     async def start_claim_sale(self, sale_row):
         guild_id = sale_row["guild_id"]
         channel_id = sale_row["claim_sale_channel_id"]
         payment_hours = sale_row["payment_hours"]
 
-        print(f"[CLAIM SALE] start_claim_sale() guild_id={guild_id} channel_id={channel_id} payment_hours={payment_hours}")
+        print(f"[CLAIM SALE] start_claim_sale() guild_id={guild_id} channel_id={channel_id} payment_hours={payment_hours}", flush=True)
 
         guild = self.bot.get_guild(guild_id)
         if not guild:
-            print(f"[ERROR] Guild {guild_id} not found in start_claim_sale")
+            print(f"[ERROR] Guild {guild_id} not found in start_claim_sale", flush=True)
             return
 
         channel = guild.get_channel(channel_id)
         if not channel:
-            print(f"[ERROR] Channel {channel_id} not found in start_claim_sale")
+            print(f"[ERROR] Channel {channel_id} not found in start_claim_sale", flush=True)
             return
 
         async with self.bot.db.acquire() as conn:
             try:
-                print("[CLAIM SALE] fetching inventory rows for sale")
+                print("[CLAIM SALE] fetching inventory rows for sale", flush=True)
 
                 if "All Conditions" in sale_row["conditions"]:
                     inv_rows = await conn.fetch(
@@ -561,8 +596,9 @@ class ClaimSaleRuntime(commands.Cog):
                         sale_row["max_price_value"],
                     )
             except Exception as e:
-                print(f"[CLAIM SALE][ERROR] inventory fetch failed: {e}")
+                print(f"[CLAIM SALE][ERROR] inventory fetch failed: {e}", flush=True)
                 raise
+
 
         expanded_rows = []
         for row in inv_rows:
