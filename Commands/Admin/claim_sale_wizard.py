@@ -1588,13 +1588,42 @@ class ClaimSaleDeleteConfirmView(BaseWizardView):
 # ============================================
 
 class ClaimSaleCommands(commands.Cog):
-    def __init__(self, bot: commands.Bot):
+    def __init__(self, bot):
         self.bot = bot
 
-    @discord.app_commands.command(name="admin_claim_sale", description="Open the Claim Sale Wizard.")
-    @discord.app_commands.checks.has_permissions(administrator=True)
+     
+        self.admin_claimsale_group = discord.app_commands.Group(
+            name="admin_claimsale",
+            description="Admin Claim Sale Commands",
+            default_permissions=discord.Permissions(administrator=True),
+            guild_only=True
+        )
+
+    async def cog_load(self):
+
+        claim_sale_cmd = discord.app_commands.Command(
+            name="manage",
+            description="Open the Claim Sale Wizard.",
+            callback=self.admin_claim_sale
+        )
+
+        claim_sale_cmd.guild_only = True
+
+        # This is why it loaded — no dependency on admincommands.py
+        self.admin_claimsale_group.add_command(claim_sale_cmd)
+
+        # And this is why it registered cleanly
+        self.bot.tree.add_command(self.admin_claimsale_group)
+
     async def admin_claim_sale(self, interaction: discord.Interaction):
         BaseWizardView.timeout_sent = False
+
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "This command can only be used inside a server.",
+                ephemeral=True
+            )
+            return
 
         state = ClaimSaleWizardState(
             guild_id=interaction.guild_id,
@@ -1612,6 +1641,10 @@ class ClaimSaleCommands(commands.Cog):
 
         view = ClaimSaleHomeView(state, interaction)
         await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(ClaimSaleCommands(bot))
 
 
 async def setup(bot: commands.Bot):
