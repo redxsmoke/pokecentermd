@@ -857,7 +857,36 @@ class MarkPaidButton(discord.ui.Button):
                 estimated_delivery
             )
 
-        # --- SEND PAYMENT CONFIRMATION DM TO BUYER ---
+            # --- AWARD 3500 EXP ---
+            await conn.execute(
+                """
+                UPDATE users
+                SET exp = exp + 3500
+                WHERE user_id = $1 AND guild_id = $2
+                """,
+                user_id,
+                interaction.guild.id
+            )
+
+            # --- FETCH UPDATED XP ---
+            new_xp = await conn.fetchval(
+                """
+                SELECT exp
+                FROM users
+                WHERE user_id = $1 AND guild_id = $2
+                """,
+                user_id,
+                interaction.guild.id
+            )
+
+        # --- LEVEL UP CHECK ---
+        await interaction.client.level_up_manager.check_level_up(
+            user_id,
+            new_xp,
+            interaction.channel
+        )
+
+        # --- DM BUYER ---
         try:
             buyer = await interaction.client.fetch_user(user_id)
             await buyer.send(
@@ -865,19 +894,23 @@ class MarkPaidButton(discord.ui.Button):
                     title="Payment Received",
                     description=(
                         f"Your payment for order #{self.order['order_id']} has been received.\n"
-                        f"Estimated delivery: {estimated_delivery.strftime('%Y-%m-%d')}"
+                        f"Estimated delivery: **{estimated_delivery.strftime('%Y-%m-%d')}**\n\n"
+                        f"🎉 You earned **3,500 EXP** for your purchase!"
                     ),
                     color=discord.Color.green()
                 )
             )
-        except Exception as e:
-            print(f"Failed to DM buyer {user_id}: {e}")
+        except Exception:
+            pass
 
         # --- ADMIN CONFIRMATION ---
         await interaction.response.send_message(
             embed=discord.Embed(
                 title="Order Marked as Paid",
-                description=f"Order #{self.order['order_id']} has been marked as paid.",
+                description=(
+                    f"Order #{self.order['order_id']} has been marked as paid.\n"
+                    f"The buyer has been awarded **3,500 EXP**."
+                ),
                 color=discord.Color.green()
             ),
             ephemeral=True

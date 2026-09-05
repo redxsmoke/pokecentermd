@@ -62,7 +62,11 @@ class MyBot(commands.Bot):
             "Commands.wishlist.mywishlist",
             "Commands.SinglesRole.singlesrole",
             "Commands.RecentlyAdded.recentlyadded",
-            "Commands.ShippingInfo.shipping_info"
+            "Commands.ShippingInfo.shipping_info",
+            "Commands.PokeTrivia.poketrivia",
+            "Commands.UserLevel.userlevel",
+            "Commands.Leaderboard.leaderboard"
+
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")

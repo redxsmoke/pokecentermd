@@ -271,6 +271,41 @@ class CatchAttemptView(discord.ui.View):
         # Successful catch
         if roll <= final_rate:
 
+            # Insert Pokémon
+            async with self.bot.db.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO user_pokemon (user_id, username, guild_id, pokedex_id, pokemon_name, pokemon_region, quantity)
+                    VALUES ($1, $2, $3, $4, $5, $6, 1)
+                    ON CONFLICT (user_id, guild_id, pokedex_id)
+                    DO UPDATE SET quantity = user_pokemon.quantity + 1;
+                """,
+                interaction.user.id,
+                interaction.user.name,
+                interaction.guild.id,
+                self.pokedex_id,
+                self.pokemon_name,
+                self.pokemon_region
+                )
+
+            # ⭐ Award +10 EXP
+            async with self.bot.db.acquire() as conn:
+                await conn.execute("""
+                    UPDATE users
+                    SET exp = exp + 10
+                    WHERE user_id = $1 AND guild_id = $2
+                """, interaction.user.id, interaction.guild.id)
+
+            # ⭐ LEVEL-UP CHECK (this was missing)
+            await self.bot.level_up_manager.check_level_up(
+                interaction.user.id,
+                new_xp,
+                interaction
+            )
+
+            # Region completion check
+            await self.bot.get_cog("CatchPokemon").check_region_completion(interaction, self.pokemon_region)
+
+            # Fetch updated stats
             async with self.bot.db.acquire() as conn:
                 caught_unique_region = await conn.fetchval("""
                     SELECT COUNT(DISTINCT pokedex_id)
@@ -309,7 +344,8 @@ class CatchAttemptView(discord.ui.View):
                 title="🎉 Pokémon Caught!",
                 description=(
                     f"**{self.pokemon_name}** was caught using a **{ball['item_name']}**!\n"
-                    f"Attempts: **{self.attempts}**\n\n"
+                    f"Attempts: **{self.attempts}**\n"
+                    f"⭐ **You earned 10 EXP!**\n\n"
                     f"**📊 {self.pokemon_region.title()} Progress — {caught_unique_region}/{region_total}**\n"
                     f"`{progress_bar}`\n\n"
                     f"**📈 Stats**\n"
@@ -319,37 +355,17 @@ class CatchAttemptView(discord.ui.View):
                 color=discord.Color.green()
             )
 
-            async with self.bot.db.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO user_pokemon (user_id, username, guild_id, pokedex_id, pokemon_name, pokemon_region, quantity)
-                    VALUES ($1, $2, $3, $4, $5, $6, 1)
-                    ON CONFLICT (user_id, guild_id, pokedex_id)
-                    DO UPDATE SET quantity = user_pokemon.quantity + 1;
-                """,
-                interaction.user.id,
-                interaction.user.name,
-                interaction.guild.id,
-                self.pokedex_id,
-                self.pokemon_name,
-                self.pokemon_region
-                )
-
-            await self.bot.get_cog("CatchPokemon").check_region_completion(interaction, self.pokemon_region)
-
             self.finished = True
             await interaction.response.edit_message(embed=embed, view=None)
 
             # ---------------------------------------------------------
-            # 🔥 CALL REWARD SYSTEM FROM pokemon_rewards_config.py
+            # 🔥 Reward System
             # ---------------------------------------------------------
             from .pokemon_rewards_config import process_catch_rewards
 
-
-            # 🔥 Force DB to see updated quantity before reward check
             async with self.bot.db.acquire() as conn:
                 await conn.execute("SELECT 1")
 
-            # 🔥 NOW call reward handler
             reward_messages = await process_catch_rewards(self.bot, interaction)
 
             if reward_messages:
@@ -409,6 +425,7 @@ class CatchAttemptView(discord.ui.View):
         await new_view.build_ball_buttons(interaction)
 
         await interaction.response.edit_message(embed=embed, view=new_view)
+
 
 
 async def setup(bot):
