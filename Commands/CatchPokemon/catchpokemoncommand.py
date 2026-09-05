@@ -295,11 +295,19 @@ class CatchAttemptView(discord.ui.View):
                     WHERE user_id = $1 AND guild_id = $2
                 """, interaction.user.id, interaction.guild.id)
 
-            # ⭐ LEVEL-UP CHECK (this was missing)
+            # ⭐ Fetch updated XP (THIS FIXES THE CRASH)
+            async with self.bot.db.acquire() as conn:
+                new_xp = await conn.fetchval("""
+                    SELECT exp
+                    FROM users
+                    WHERE user_id = $1 AND guild_id = $2
+                """, interaction.user.id, interaction.guild.id)
+
+            # ⭐ LEVEL-UP CHECK
             await self.bot.level_up_manager.check_level_up(
                 interaction.user.id,
                 new_xp,
-                interaction
+                interaction.channel
             )
 
             # Region completion check
