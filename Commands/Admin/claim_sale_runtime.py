@@ -549,7 +549,14 @@ class ClaimSaleRuntime(commands.Cog):
         channel_id = sale_row["claim_sale_channel_id"]
         payment_hours = sale_row["payment_hours"]
 
-        print(f"[CLAIM SALE] start_claim_sale() guild_id={guild_id} channel_id={channel_id} payment_hours={payment_hours}", flush=True)
+        min_price = sale_row["min_price_value"]
+        max_price = sale_row["max_price_value"]
+
+        print(
+            f"[CLAIM SALE] start_claim_sale() guild_id={guild_id} channel_id={channel_id} "
+            f"payment_hours={payment_hours} price_range=({min_price}, {max_price})",
+            flush=True
+        )
 
         guild = self.bot.get_guild(guild_id)
         if not guild:
@@ -573,11 +580,13 @@ class ClaimSaleRuntime(commands.Cog):
                         WHERE guild_id = $1
                           AND is_active = TRUE
                           AND quantity_available >= 1
-                          AND ($2::int IS NULL OR price <= $2)
+                          AND price >= $2
+                          AND price <= $3
                         ORDER BY price ASC
                         """,
                         guild_id,
-                        sale_row["max_price_value"],
+                        min_price,
+                        max_price,
                     )
                 else:
                     inv_rows = await conn.fetch(
@@ -587,18 +596,19 @@ class ClaimSaleRuntime(commands.Cog):
                         WHERE guild_id = $1
                           AND is_active = TRUE
                           AND quantity_available >= 1
-                          AND ($3::int IS NULL OR price <= $3)
-                          AND condition = ANY($2::text[])
+                          AND condition = ANY($4::text[])
+                          AND price >= $2
+                          AND price <= $3
                         ORDER BY price ASC
                         """,
                         guild_id,
+                        min_price,
+                        max_price,
                         sale_row["conditions"],
-                        sale_row["max_price_value"],
                     )
             except Exception as e:
                 print(f"[CLAIM SALE][ERROR] inventory fetch failed: {e}", flush=True)
                 raise
-
 
         expanded_rows = []
         for row in inv_rows:

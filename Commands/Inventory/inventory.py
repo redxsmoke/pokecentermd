@@ -10,6 +10,64 @@ from Commands.Inventory.inventory_filter import FilterTypeView
 GALLERY_PAGE_SIZE = 6
 log = logging.getLogger("inventory")
 
+
+
+class IllustratorSearchModal(discord.ui.Modal, title="Search Illustrator"):
+    def __init__(self, parent_view):
+        super().__init__()
+        self.parent_view = parent_view
+
+        self.illustrator_name = discord.ui.TextInput(
+            label="Illustrator Name",
+            required=True,
+            max_length=100,
+            placeholder="Enter illustrator name (fuzzy matching enabled)"
+        )
+        self.add_item(self.illustrator_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self.illustrator_name.value.strip().lower()
+
+        inventory_cog = self.parent_view.bot.get_cog("Inventory")
+
+        self.parent_view.filters["illustrator"] = name
+
+        rows = await inventory_cog.run_query(
+            pokemon_name=self.parent_view.base_pokemon_name,
+            set_name=self.parent_view.base_set_name,
+            filters=self.parent_view.filters,
+            guild_id=interaction.guild.id
+        )
+
+        if not rows:
+            embed = discord.Embed(
+                title="No Results",
+                description=f"No results found for illustrator **{chosen}**.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+
+        # Rebuild pages
+        self.parent_view.pages, self.parent_view.inventory_ids = inventory_cog.build_gallery_pages(rows)
+        self.parent_view.page = 0
+
+        embeds, files = self.parent_view.pages[0]
+        discord_files = [
+            discord.File(path, filename=filename)
+            for path, filename in files
+        ]
+
+        self.parent_view.build_dropdowns()
+
+        await interaction.response.edit_message(
+            embeds=embeds,
+            attachments=discord_files,
+            view=self.parent_view
+        )
+
+
 class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
     def __init__(self, parent_view):
         super().__init__()
@@ -63,13 +121,28 @@ class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
             attachments=discord_files,
             view=self.parent_view
         )
+
+
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     async def run_query(self, pokemon_name=None, set_name=None, filters=None, guild_id=None):
+
         query = """
-            SELECT *
+            SELECT
+                inventory_id,
+                pokemon_name,
+                series,
+                set_name,
+                card_number,
+                variant,
+                rarity,
+                price,
+                quantity_available,
+                condition,
+                illustrator,
+                image_link
             FROM inventory
             WHERE guild_id = $1
               AND is_active = TRUE
@@ -88,6 +161,12 @@ class Inventory(commands.Cog):
 
         if filters:
             for key, value in filters.items():
+
+                if key == "illustrator":
+                    query += f" AND LOWER(illustrator) LIKE LOWER(${len(params)+1})"
+                    params.append(f"%{value}%")
+                    continue
+
                 query += f" AND {key} = ${len(params)+1}"
                 params.append(value)
 
@@ -97,6 +176,7 @@ class Inventory(commands.Cog):
             rows = await conn.fetch(query, *params)
 
         return rows
+
 
     async def get_distinct_values(self, column_name: str, guild_id: int):
         query = f"""
@@ -110,6 +190,7 @@ class Inventory(commands.Cog):
         async with self.bot.db.acquire() as conn:
             rows = await conn.fetch(query, guild_id)
         return [r[column_name] for r in rows]
+
 
     def build_gallery_pages(self, rows):
         pages = []
@@ -129,6 +210,9 @@ class Inventory(commands.Cog):
             embed.add_field(name="Variant", value=row["variant"] or "—")
             embed.add_field(name="Rarity", value=row["rarity"] or "—")
 
+            # ⭐ NEW — Illustrator now shown in /shop output
+            embed.add_field(name="Illustrator", value=row["illustrator"] or "—", inline=False)
+
             if row["image_link"]:
                 embed.set_image(url=row["image_link"])
 
@@ -144,6 +228,7 @@ class Inventory(commands.Cog):
             pages.append((current_embeds, current_files))
 
         return pages, inventory_ids
+
 
     @app_commands.command(
         name="shop",
@@ -234,12 +319,14 @@ class Inventory(commands.Cog):
         series_list = await self.get_distinct_values("series", interaction.guild.id)
         variants = await self.get_distinct_values("variant", interaction.guild.id)
         rarities = await self.get_distinct_values("rarity", interaction.guild.id)
+        illustrators = await self.get_distinct_values("illustrator", interaction.guild.id)
 
         filter_options = {
             "condition": conditions,
             "series": series_list,
             "variant": variants,
             "rarity": rarities,
+            "illustrator": illustrators,
         }
 
         view = self.InventoryView(
@@ -264,6 +351,7 @@ class Inventory(commands.Cog):
             view=view,
             ephemeral=True
         )
+
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, inventory_ids, filter_options):
             super().__init__(timeout=180)
@@ -365,6 +453,7 @@ class Inventory(commands.Cog):
                 discord.SelectOption(label="Series", value="series"),
                 discord.SelectOption(label="Variant", value="variant"),
                 discord.SelectOption(label="Rarity", value="rarity"),
+                discord.SelectOption(label="Illustrator", value="illustrator"),   
             ]
 
             filter_type_select = discord.ui.Select(
@@ -379,6 +468,11 @@ class Inventory(commands.Cog):
 
                 if selected == "pokemon_name":
                     await interaction.response.send_modal(PokemonSearchModal(self))
+                    return
+
+         
+                if selected == "illustrator":
+                    await interaction.response.send_modal(IllustratorSearchModal(self))
                     return
 
                 view = FilterTypeView(

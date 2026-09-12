@@ -34,6 +34,7 @@ class UpdateSingleWizardView(ui.View):
             "grade": None,
             "image_link": None,
             "inventory_id": None,
+            "illustrator": None,
         }
 
         self.step = WizardStep.POKEMON_NAME
@@ -516,8 +517,9 @@ async def update_card_in_db(state, bot, guild_id, inventory_id):
                 quantity_available = $11,
                 image_link = $12,
                 condition = $13,
-                guild_id = $14
-            WHERE inventory_id = $15
+                illustrator = $14,
+                guild_id = $15
+            WHERE inventory_id = $16
             """,
             state["pokemon_name"],
             state["series"],
@@ -532,6 +534,7 @@ async def update_card_in_db(state, bot, guild_id, inventory_id):
             state["quantity_available"],
             state["image_link"],
             state["condition"],
+            state["illustrator"],
             guild_id,
             inventory_id
         )

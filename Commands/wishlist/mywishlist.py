@@ -2,8 +2,7 @@ import discord
 from discord.ext import commands
 from discord import ui, app_commands
 
-PAGE_SIZE = 20  # 20 filters per page
-
+PAGE_SIZE = 20
 
 class WishlistStep:
     MODAL = 1
@@ -12,7 +11,6 @@ class WishlistStep:
     SERIES = 4
     SET = 5
     CONFIRM = 6
-
 
 class WishlistWizardView(ui.View):
     def __init__(self, bot, user):
@@ -28,18 +26,18 @@ class WishlistWizardView(ui.View):
             "series": None,
             "set_name": None,
             "notes": None,
+            "illustrator": None,
         }
 
         self.step = WishlistStep.MODAL
-        self.message: discord.Message | None = None
+        self.message = None
 
-    async def start(self, interaction: discord.Interaction):
+    async def start(self, interaction):
         embed = discord.Embed(
             title="Add Wishlist Filter",
             description="Click **Next** to begin.",
             color=discord.Color.blurple()
         )
-
         await interaction.response.send_message(embed=embed, view=self, ephemeral=True)
         self.message = await interaction.original_response()
 
@@ -72,7 +70,8 @@ class WishlistWizardView(ui.View):
         if self.step == WishlistStep.MODAL:
             return discord.Embed(
                 title="Step 1 — Basic Filters",
-                description="All fields are optional, but **at least one must be entered** to save.\n\nClick **Next** to enter Pokémon name, variant, price, and notes.",
+                description="All fields optional, but at least one must be entered.\n\n"
+                            "Click **Next** to enter Pokémon name, variant, price, illustrator, and notes.",
                 color=discord.Color.blurple()
             )
 
@@ -110,7 +109,6 @@ class WishlistWizardView(ui.View):
                 description="Review your wishlist filter.",
                 color=discord.Color.green()
             )
-
             for key, value in self.state.items():
                 if key == "price" and value is not None:
                     value = f"${value:.2f}"
@@ -119,21 +117,19 @@ class WishlistWizardView(ui.View):
                     value=value or "Any",
                     inline=False
                 )
-
             return embed
 
     @ui.button(label="Back", style=discord.ButtonStyle.secondary)
-    async def back_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def back_button(self, interaction, button):
         if self.step == WishlistStep.MODAL:
             await interaction.response.defer(ephemeral=True)
             return
-
         self.step -= 1
         await interaction.response.defer(ephemeral=True)
         await self.update()
 
     @ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def next_button(self, interaction, button):
         if self.step == WishlistStep.MODAL:
             await interaction.response.send_modal(WishlistModal(self))
             return
@@ -144,15 +140,7 @@ class WishlistWizardView(ui.View):
             await self.update()
             return
 
-        if self.step == WishlistStep.SERIES_PROMPT:
-            await interaction.response.defer(ephemeral=True)
-            return
-
-        if self.step == WishlistStep.SERIES:
-            await interaction.response.defer(ephemeral=True)
-            return
-
-        if self.step == WishlistStep.SET:
+        if self.step in (WishlistStep.SERIES_PROMPT, WishlistStep.SERIES, WishlistStep.SET):
             await interaction.response.defer(ephemeral=True)
             return
 
@@ -161,20 +149,13 @@ class WishlistWizardView(ui.View):
             return
 
     @ui.button(label="Finish", style=discord.ButtonStyle.success, disabled=True)
-    async def finish_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def finish_button(self, interaction, button):
         await self.finish(interaction)
 
     async def add_series_dropdown(self):
         async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(
-                "SELECT DISTINCT series FROM expansion_list ORDER BY series"
-            )
-
-        options = [
-            discord.SelectOption(label=row["series"], value=row["series"])
-            for row in rows
-        ]
-
+            rows = await conn.fetch("SELECT DISTINCT series FROM expansion_list ORDER BY series")
+        options = [discord.SelectOption(label=r["series"], value=r["series"]) for r in rows]
         self.add_item(SeriesSelect(self, options))
 
     async def add_set_dropdown(self):
@@ -183,33 +164,22 @@ class WishlistWizardView(ui.View):
                 "SELECT set_name FROM expansion_list WHERE series = $1 ORDER BY set_name",
                 self.state["series"]
             )
-
-        options = [
-            discord.SelectOption(label=row["set_name"], value=row["set_name"])
-            for row in rows
-        ]
-
+        options = [discord.SelectOption(label=r["set_name"], value=r["set_name"]) for r in rows]
         self.add_item(SetSelect(self, options))
 
-    async def finish(self, interaction: discord.Interaction):
+    async def finish(self, interaction):
         if interaction.guild is None:
-            embed = discord.Embed(
-                title="Command Not Allowed",
-                description="This command can't be used in DMs.\n\nPlease run it inside a server channel.",
-                color=discord.Color.red()
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="Command Not Allowed",
+                    description="This command must be used in a server.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
             )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        if (
-            not self.state["pokemon_name"]
-            and not self.state["variant"]
-            and not self.state["price"]
-            and not self.state["condition"]
-            and not self.state["series"]
-            and not self.state["set_name"]
-            and not self.state["notes"]
-        ):
+        if not any(self.state.values()):
             await interaction.response.send_message(
                 "You must enter at least one field.",
                 ephemeral=True
@@ -222,9 +192,9 @@ class WishlistWizardView(ui.View):
                 INSERT INTO user_wishlist (
                     guild_id, user_id,
                     pokemon_name, series, set_name,
-                    variant, condition, price, notes
+                    variant, condition, price, notes, illustrator
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
                 """,
                 interaction.guild.id,
                 self.user.id,
@@ -235,32 +205,34 @@ class WishlistWizardView(ui.View):
                 self.state["condition"],
                 self.state["price"],
                 self.state["notes"],
+                self.state["illustrator"],
             )
 
-        embed = discord.Embed(
-            title="Wishlist Saved",
-            description="Your wishlist filter has been saved.",
-            color=discord.Color.green()
+        await interaction.response.send_message(
+            embed=discord.Embed(
+                title="Wishlist Saved",
+                description="Your wishlist filter has been saved.",
+                color=discord.Color.green()
+            ),
+            ephemeral=True
         )
-
-        await interaction.response.send_message(embed=embed, ephemeral=True)
         self.stop()
-
-
 class WishlistModal(ui.Modal, title="Wishlist Filters"):
     pokemon_name = ui.TextInput(label="Pokémon Name", required=False)
     variant = ui.TextInput(label="Variant", required=False)
     price = ui.TextInput(label="Max Price", required=False)
+    illustrator = ui.TextInput(label="Illustrator", required=False)
     notes = ui.TextInput(label="Notes", required=False)
 
-    def __init__(self, wizard: WishlistWizardView):
+    def __init__(self, wizard):
         super().__init__()
         self.wizard = wizard
 
-    async def on_submit(self, interaction: discord.Interaction):
+    async def on_submit(self, interaction):
         self.wizard.state["pokemon_name"] = self.pokemon_name.value.strip() or None
         self.wizard.state["variant"] = self.variant.value.strip() or None
         self.wizard.state["notes"] = self.notes.value.strip() or None
+        self.wizard.state["illustrator"] = self.illustrator.value.strip() or None
 
         raw = self.price.value.strip()
         if raw:
@@ -269,7 +241,7 @@ class WishlistModal(ui.Modal, title="Wishlist Filters"):
                 self.wizard.state["price"] = float(raw)
             except:
                 await interaction.response.send_message(
-                    "Price must be a number.",
+                    "Price must be a valid number.",
                     ephemeral=True
                 )
                 return
@@ -277,7 +249,6 @@ class WishlistModal(ui.Modal, title="Wishlist Filters"):
         self.wizard.step = WishlistStep.CONDITION
         await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
-
 
 class ConditionSelect(ui.Select):
     def __init__(self, wizard: WishlistWizardView):
@@ -296,12 +267,9 @@ class ConditionSelect(ui.Select):
     async def callback(self, interaction: discord.Interaction):
         val = self.values[0]
         self.wizard.state["condition"] = None if val == "Any" else val
-
         self.wizard.step = WishlistStep.SERIES_PROMPT
-
         await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
-
 
 class SeriesPromptYes(ui.Button):
     def __init__(self, wizard: WishlistWizardView):
@@ -350,18 +318,18 @@ class SetSelect(ui.Select):
 
 
 class WishlistListView(ui.View):
-    def __init__(self, rows: list, guild_id: int, user_id: int):
+    def __init__(self, rows, guild_id, user_id):
         super().__init__(timeout=1200)
         self.rows = rows
         self.guild_id = guild_id
         self.user_id = user_id
         self.page = 0
-        self.message: discord.Message | None = None
+        self.message = None
         self.remove_mode = False
-        self.remove_select: ui.Select | None = None
+        self.remove_select = None
 
     @property
-    def total_pages(self) -> int:
+    def total_pages(self):
         if not self.rows:
             return 1
         return (len(self.rows) - 1) // PAGE_SIZE + 1
@@ -371,7 +339,7 @@ class WishlistListView(ui.View):
         end = start + PAGE_SIZE
         return self.rows[start:end]
 
-    def build_list_embed(self) -> discord.Embed:
+    def build_list_embed(self):
         embed = discord.Embed(
             title=f"Your Wishlist Filters (Page {self.page + 1}/{self.total_pages})",
             color=discord.Color.blurple()
@@ -381,6 +349,8 @@ class WishlistListView(ui.View):
         description_parts = []
 
         for row in page_rows:
+            title = "Wishlist Filter"
+
             if row["pokemon_name"]:
                 title = f"{row['pokemon_name']} Filter"
             elif row["price"] is not None:
@@ -391,13 +361,16 @@ class WishlistListView(ui.View):
                 title = f"{row['set_name']} Filter"
             elif row["series"]:
                 title = f"{row['series']} Filter"
-            else:
-                title = "Wishlist Filter"
+            elif row.get("illustrator"):
+                title = f"{row['illustrator']} Filter"
 
             parts = []
 
             if row["pokemon_name"]:
                 parts.append(f"★ Name: {row['pokemon_name']}")
+
+            if row["variant"]:
+                parts.append(f"★ Variant: {row['variant']}")
 
             if row["price"] is not None:
                 parts.append(f"★ Price: < ${row['price']:.2f}")
@@ -405,11 +378,14 @@ class WishlistListView(ui.View):
             if row["condition"]:
                 parts.append(f"★ Condition: {row['condition']}")
 
+            if row["series"]:
+                parts.append(f"★ Series: {row['series']}")
+
             if row["set_name"]:
                 parts.append(f"★ Set: {row['set_name']}")
 
-            if row["series"]:
-                parts.append(f"★ Series: {row['series']}")
+            if row.get("illustrator"):
+                parts.append(f"★ Illustrator: {row['illustrator']}")
 
             if row["notes"]:
                 parts.append(f"★ Notes: {row['notes']}")
@@ -417,14 +393,10 @@ class WishlistListView(ui.View):
             body = "```text\n" + "\n".join(parts) + "\n```"
             description_parts.append(f"**{title}**\n{body}")
 
-        if description_parts:
-            embed.description = "\n\n".join(description_parts)
-        else:
-            embed.description = "No filters on this page."
-
+        embed.description = "\n\n".join(description_parts) if description_parts else "No filters on this page."
         return embed
 
-    def build_remove_embed(self) -> discord.Embed:
+    def build_remove_embed(self):
         embed = discord.Embed(
             title=f"Remove Wishlist Item (Page {self.page + 1}/{self.total_pages})",
             color=discord.Color.red()
@@ -437,7 +409,7 @@ class WishlistListView(ui.View):
             parts = []
 
             if row["pokemon_name"]:
-                parts.append(f"★ {row['pokemon_name']}")
+                parts.append(f"{row['pokemon_name']}")
 
             if row["condition"]:
                 parts.append(f"Condition: {row['condition']}")
@@ -446,19 +418,21 @@ class WishlistListView(ui.View):
                 parts.append(f"Set: {row['set_name']}")
 
             if row["price"] is not None:
-                parts.append(f"Less than ${row['price']:.2f}")
+                parts.append(f"< ${row['price']:.2f}")
+
+            if row.get("illustrator"):
+                parts.append(f"Illustrator: {row['illustrator']}")
 
             label = " – ".join(parts) if parts else "Wishlist Filter"
-
             if len(label) > 100:
                 label = label[:97] + "..."
 
             lines.append(f"• {label}")
 
-        if lines:
-            embed.description = "Select a wishlist filter to remove:\n\n" + "\n".join(lines)
-        else:
-            embed.description = "No filters on this page."
+        embed.description = (
+            "Select a wishlist filter to remove:\n\n" + "\n".join(lines)
+            if lines else "No filters on this page."
+        )
 
         return embed
 
@@ -499,9 +473,8 @@ class WishlistListView(ui.View):
             await self.message.edit(embed=embed, view=self)
 
     async def on_timeout(self):
-        if self.message is None:
-            return
-        await self.message.edit(view=None)
+        if self.message:
+            await self.message.edit(view=None)
 
     def build_remove_select(self):
         page_rows = self._page_slice()
@@ -511,7 +484,7 @@ class WishlistListView(ui.View):
             parts = []
 
             if row["pokemon_name"]:
-                parts.append(f"★ {row['pokemon_name']}")
+                parts.append(row["pokemon_name"])
 
             if row["condition"]:
                 parts.append(f"Condition: {row['condition']}")
@@ -520,29 +493,26 @@ class WishlistListView(ui.View):
                 parts.append(f"Set: {row['set_name']}")
 
             if row["price"] is not None:
-                parts.append(f"Less than ${row['price']:.2f}")
+                parts.append(f"< ${row['price']:.2f}")
+
+            if row.get("illustrator"):
+                parts.append(f"Illustrator: {row['illustrator']}")
 
             label = " – ".join(parts) if parts else "Wishlist Filter"
-
             if len(label) > 100:
                 label = label[:97] + "..."
 
-            options.append(
-                discord.SelectOption(
-                    label=label,
-                    value=str(row["wishlist_id"])
-                )
-            )
+            options.append(discord.SelectOption(label=label, value=str(row["wishlist_id"])))
 
         if self.remove_select:
             self.remove_item(self.remove_select)
 
         class RemoveSelect(ui.Select):
-            def __init__(self, parent_view: "WishlistListView", opts):
+            def __init__(self, parent, opts):
                 super().__init__(placeholder="Select a wishlist filter to remove", options=opts)
-                self.owner = parent_view
+                self.owner = parent
 
-            async def callback(self_inner, interaction: discord.Interaction):
+            async def callback(self_inner, interaction):
                 wid = int(self_inner.values[0])
 
                 async with interaction.client.db.acquire() as conn:
@@ -569,7 +539,6 @@ class WishlistListView(ui.View):
                         ),
                         ephemeral=True
                     )
-
                     if self_inner.owner.message:
                         await self_inner.owner.message.edit(view=None)
                     self_inner.owner.stop()
@@ -595,88 +564,76 @@ class WishlistListView(ui.View):
         self.add_item(self.remove_select)
 
     @ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.remove_mode:
-            await interaction.response.defer()
-            return
-
+    async def prev_button(self, interaction, button):
         if self.page > 0:
             self.page -= 1
         await interaction.response.defer()
         await self.refresh()
 
     @ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
-        if self.remove_mode:
-            await interaction.response.defer()
-            return
-
+    async def next_button(self, interaction, button):
         if self.page < self.total_pages - 1:
             self.page += 1
         await interaction.response.defer()
         await self.refresh()
 
     @ui.button(label="➕ Add wishlist item", style=discord.ButtonStyle.success)
-    async def add_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def add_button(self, interaction, button):
         wizard = WishlistWizardView(interaction.client, interaction.user)
         await wizard.start(interaction)
 
     @ui.button(label="🗑️ Remove wishlist item", style=discord.ButtonStyle.danger)
-    async def remove_button(self, interaction: discord.Interaction, button: ui.Button):
+    async def remove_button(self, interaction, button):
         if not self.rows:
             await interaction.response.defer()
             return
-
         self.remove_mode = True
         await interaction.response.defer()
         await self.refresh()
 
     @ui.button(label="Previous", style=discord.ButtonStyle.secondary)
-    async def remove_prev_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not self.remove_mode:
-            await interaction.response.defer()
-            return
-
+    async def remove_prev_button(self, interaction, button):
         if self.page > 0:
             self.page -= 1
-
         await interaction.response.defer()
         await self.refresh()
 
     @ui.button(label="Next", style=discord.ButtonStyle.primary)
-    async def remove_next_button(self, interaction: discord.Interaction, button: ui.Button):
-        if not self.remove_mode:
-            await interaction.response.defer()
-            return
-
+    async def remove_next_button(self, interaction, button):
         if self.page < self.total_pages - 1:
             self.page += 1
-
         await interaction.response.defer()
         await self.refresh()
 
     @ui.button(label="Cancel", style=discord.ButtonStyle.danger)
-    async def cancel_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_message(
-            "Changes cancelled.",
-            ephemeral=True
-        )
+    async def cancel_button(self, interaction, button):
+        await interaction.response.send_message("Changes cancelled.", ephemeral=True)
         if self.message:
             await self.message.edit(view=None)
         self.stop()
-
-
 class Wishlist(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="mywishlist", description="View and manage your wishlist filters.")
+    @app_commands.command(
+        name="mywishlist",
+        description="View and manage your wishlist filters."
+    )
     async def mywishlist(self, interaction: discord.Interaction):
+
+        # ⭐ Updated SQL to include illustrator
         async with self.bot.db.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT wishlist_id, pokemon_name, series, set_name,
-                       variant, condition, price, notes
+                SELECT wishlist_id,
+                       pokemon_name,
+                       series,
+                       set_name,
+                       variant,
+                       condition,
+                       price,
+                       notes,
+                       illustrator
                 FROM user_wishlist
                 WHERE guild_id = $1 AND user_id = $2
                 ORDER BY wishlist_id ASC
@@ -685,14 +642,25 @@ class Wishlist(commands.Cog):
                 interaction.user.id
             )
 
+        # ⭐ FIX: If user has no wishlist items, still show Add button
         if not rows:
-            await interaction.response.send_message(
-                "You have no wishlist filters."
+            view = WishlistListView([], interaction.guild.id, interaction.user.id)
+
+            embed = discord.Embed(
+                title="Your Wishlist Filters",
+                description="You have no wishlist filters.",
+                color=discord.Color.blurple()
             )
+
+            await interaction.response.send_message(embed=embed, view=view)
+            view.message = await interaction.original_response()
+            await view.refresh()
             return
 
+        # ⭐ Normal case: user has wishlist items
         view = WishlistListView(rows, interaction.guild.id, interaction.user.id)
         embed = view.build_list_embed()
+
         await interaction.response.send_message(embed=embed, view=view)
         view.message = await interaction.original_response()
         await view.refresh()
@@ -700,3 +668,6 @@ class Wishlist(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Wishlist(bot))
+
+
+

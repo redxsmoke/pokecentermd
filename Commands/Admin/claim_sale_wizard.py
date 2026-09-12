@@ -289,6 +289,15 @@ class PriceRangeDropdown(discord.ui.Select):
             discord.SelectOption(label="Under $25", value="25"),
             discord.SelectOption(label="Under $50", value="50"),
             discord.SelectOption(label="Under $100", value="100"),
+            discord.SelectOption(label="Under $150", value="150"),
+            discord.SelectOption(label="Under $200", value="200"),
+            discord.SelectOption(label="Under $250", value="250"),
+            discord.SelectOption(label="Under $300", value="300"),
+            discord.SelectOption(label="Under $400", value="400"),
+            discord.SelectOption(label="Under $500", value="500"),
+            discord.SelectOption(label="Under $750", value="750"),
+            discord.SelectOption(label="Under $1000", value="1000"),
+            discord.SelectOption(label="Under $2000", value="2000"),
         ]
 
         super().__init__(
@@ -304,7 +313,7 @@ class PriceRangeDropdown(discord.ui.Select):
         async with interaction.client.db.acquire() as conn:
 
             # ================================
-            # ALL INVENTORY → full min/max
+            # ALL INVENTORY → true min/max
             # ================================
             if val == "all":
                 row = await conn.fetchrow(
@@ -320,35 +329,23 @@ class PriceRangeDropdown(discord.ui.Select):
                     self.state.guild_id
                 )
 
+                if not row or row["min_price"] is None:
+                    self.state.min_price_value = None
+                    self.state.max_price_value = None
+                    self.state.max_price_label = "No Matching Inventory"
+                else:
+                    self.state.min_price_value = row["min_price"]
+                    self.state.max_price_value = row["max_price"]
+                    self.state.max_price_label = f"${row['min_price']} - ${row['max_price']}"
+
             # ================================
-            # SPECIFIC RANGE → min/max ≤ val
+            # SPECIFIC RANGE → ALWAYS 0 → X
             # ================================
             else:
                 max_limit = int(val)
-                row = await conn.fetchrow(
-                    """
-                    SELECT 
-                        MIN(price) AS min_price,
-                        MAX(price) AS max_price
-                    FROM inventory
-                    WHERE guild_id = $1
-                      AND is_active = TRUE
-                      AND quantity_available >= 1
-                      AND price <= $2
-                    """,
-                    self.state.guild_id,
-                    max_limit
-                )
-
-        # Handle no matching rows
-        if not row or row["min_price"] is None or row["max_price"] is None:
-            self.state.min_price_value = None
-            self.state.max_price_value = None
-            self.state.max_price_label = "No Matching Inventory"
-        else:
-            self.state.min_price_value = row["min_price"]
-            self.state.max_price_value = row["max_price"]
-            self.state.max_price_label = f"${row['min_price']} - ${row['max_price']}"
+                self.state.min_price_value = 0
+                self.state.max_price_value = max_limit
+                self.state.max_price_label = f"$0 - ${max_limit}"
 
         await self.view.go_next(interaction)
 

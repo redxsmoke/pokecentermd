@@ -103,6 +103,8 @@ class InventoryCSVImport(commands.Cog):
                 set_name = (row.get("Set") or "").strip()
                 variant = (row.get("Variant") or "").strip()
                 rarity = (row.get("Rarity") or "").strip()
+                illustrator = (row.get("Illustrator") or "").strip()
+
 
                 note1 = (row.get("Note 1") or "").strip()
                 note2 = (row.get("Note 2") or "").strip()
@@ -273,6 +275,9 @@ class InventoryCSVImport(commands.Cog):
 
                             if f["set_name"] and f["set_name"] != set_name:
                                 match = False
+                            if f.get("illustrator") and f["illustrator"].lower() not in illustrator.lower():
+                                match = False
+
 
                             if not match:
                                 continue
@@ -306,7 +311,8 @@ class InventoryCSVImport(commands.Cog):
                             csv_id, pokemon_name, series, set_name, card_number,
                             variant, rarity, price, graded, grading_company, grade,
                             quantity_available, image_link, condition,
-                            reserved, reserved_until, date_added, 
+                            illustrator,
+                            date_added, 
                             note1, note2, note3, note4, note5
                         )
                         VALUES (
@@ -314,8 +320,9 @@ class InventoryCSVImport(commands.Cog):
                             $2,$3,$4,$5,$6,
                             $7,$8,$9,NULL,NULL,NULL,
                             $10,$11,$12,
-                            0,NULL,$13,
-                            $14, $15, $16, $17, $18
+                            $13,
+                            $14,
+                            $15, $16, $17, $18, $19
                         )
                         """,
                         guild_id,
@@ -330,6 +337,7 @@ class InventoryCSVImport(commands.Cog):
                         quantity_available,
                         image_link,
                         condition,
+                        illustrator,
                         datetime.now().date(),
                         note1,
                         note2,
@@ -337,11 +345,9 @@ class InventoryCSVImport(commands.Cog):
                         note4,
                         note5
                     )
-
-                    # ⭐ NEW — mark that a new card was inserted
+ 
                     new_cards_inserted = True
-
-                    # ⭐ Wishlist notifications unchanged
+ 
                     filters = await conn.fetch(
                         "SELECT * FROM user_wishlist WHERE guild_id = $1",
                         guild_id
@@ -368,6 +374,10 @@ class InventoryCSVImport(commands.Cog):
                         if f["set_name"] and f["set_name"] != set_name:
                             match = False
 
+                        if f.get("illustrator") and f["illustrator"].lower() not in illustrator.lower():
+                            match = False
+
+
                         if not match:
                             continue
 
@@ -382,6 +392,7 @@ class InventoryCSVImport(commands.Cog):
                                         f"Series: {series}\n"
                                         f"Set: {set_name}\n"
                                         f"Condition: {condition}\n"
+                                        f"Illustrator: {illustrator}\n"
                                         f"Price: ${final_price}"
                                     ),
                                     color=discord.Color.green()
@@ -390,7 +401,7 @@ class InventoryCSVImport(commands.Cog):
                         except Exception as e:
                             print(f"Failed to DM user {f['user_id']}: {e}")
 
-            # ⭐⭐⭐ ZERO‑QUANTITY FIX — ADDED WITHOUT ALTERING ANYTHING ELSE ⭐⭐⭐
+ 
 
             # Build CSV key set
             csv_keys = set()

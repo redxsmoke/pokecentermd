@@ -1,5 +1,3 @@
-# level_up_manager.py
-
 import discord
 
 class LevelUpManager:
@@ -7,12 +5,38 @@ class LevelUpManager:
         self.bot = bot
         self.pool = pool
 
-    async def check_level_up(self, user_id: int, new_xp: int, channel: discord.TextChannel):
-        """
-        Checks if the user leveled up based on cd_levels table.
-        If so, updates DB and sends a level-up embed.
-        """
+    def format_reward_message(self, reward):
+        r_type = reward["type"]
+        value = reward["value"]
 
+        # Percent off
+        if r_type == "percent_off":
+            return f"You earned **{value}% off** your next order!"
+
+        # Percent off with minimum
+        if r_type == "percent_off_min":
+            return f"You earned **{value}% off** orders over **${reward['min_amount']:.2f}**!"
+
+        # Flat amount off
+        if r_type == "flat_off":
+            return f"You earned **${value:.2f} off** your next order!"
+
+        # Flat amount off with minimum
+        if r_type == "flat_off_min":
+            return f"You earned **${value:.2f} off** any order over **${reward['min_amount']:.2f}**!"
+
+        # Free shipping
+        if r_type == "free_shipping":
+            return "You earned **FREE shipping** on your next order!"
+
+        # Free shipping with minimum
+        if r_type == "free_shipping_min":
+            return f"You earned **FREE shipping** on orders over **${reward['min_amount']:.2f}**!"
+
+        # Fallback
+        return f"You earned a new reward: **{reward['name']}**!"
+
+    async def check_level_up(self, user_id: int, new_xp: int, channel: discord.TextChannel):
         async with self.pool.acquire() as conn:
 
             # Fetch current user level
@@ -57,7 +81,7 @@ class LevelUpManager:
                 user_id
             )
 
-            # Build level-up embed
+            # Level-up embed
             embed = discord.Embed(
                 title=f"🎉 Level Up!",
                 description=(
@@ -67,8 +91,44 @@ class LevelUpManager:
                 color=discord.Color.gold()
             )
 
-            # Add thumbnail if exists
             if new_level_row["level_up_image_url"]:
                 embed.set_thumbnail(url=new_level_row["level_up_image_url"])
 
             await channel.send(embed=embed)
+
+            # ============================================================
+            # ⭐ Rewards trigger when reaching OR passing over levels
+            # ============================================================
+
+            reward_rows = await conn.fetch(
+                """
+                SELECT reward_id, name, category, type, value, min_amount
+                FROM guild_rewards
+                WHERE guild_id = $1
+                  AND active = TRUE
+                  AND required_level BETWEEN $2 AND $3
+                """,
+                channel.guild.id,
+                old_level + 1,
+                new_level
+            )
+
+            if not reward_rows:
+                return
+
+            # Send human-readable reward messages
+            for reward in reward_rows:
+                human_message = self.format_reward_message(reward)
+
+                reward_embed = discord.Embed(
+                    title="🏆 Reward Earned!",
+                    description=(
+                        f"<@{user_id}> unlocked a new reward!\n\n"
+                        f"{human_message}\n\n"
+                        f"You can use this reward during checkout!"
+                    ),
+                    color=discord.Color.green()
+                )
+
+                await channel.send(embed=reward_embed)
+

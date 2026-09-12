@@ -18,6 +18,7 @@ class WizardStep:
     CONDITION = 5
     GRADED_FIELDS = 6
     CONFIRM = 7
+    ILLUSTRATOR = 8
 
 
 class AddSingleWizardView(ui.View):
@@ -40,6 +41,7 @@ class AddSingleWizardView(ui.View):
             "grading_company": None,
             "grade": None,
             "image_link": None,
+            "illustrator": None,
         }
 
         self.step = WizardStep.POKEMON_NAME
@@ -48,8 +50,10 @@ class AddSingleWizardView(ui.View):
     async def update(self):
         self.clear_items()
 
-        self.add_item(self.back_button)
-        self.add_item(self.next_button)
+        # Only show Back/Next on normal steps
+        if self.step not in (WizardStep.ILLUSTRATOR, WizardStep.CONFIRM):
+            self.add_item(self.back_button)
+            self.add_item(self.next_button)
 
         if self.step == WizardStep.SERIES:
             await self.add_series_select()
@@ -64,6 +68,27 @@ class AddSingleWizardView(ui.View):
             self.add_item(GradingCompanySelect(self))
             self.add_item(GradeSelect(self))
 
+        # --- Illustrator Step Buttons (Dynamic) ---
+        if self.step == WizardStep.ILLUSTRATOR:
+            yes_btn = ui.Button(label="Yes — Add Illustrator", style=discord.ButtonStyle.primary)
+            no_btn = ui.Button(label="No — Skip", style=discord.ButtonStyle.secondary)
+
+            async def yes_callback(interaction):
+                await interaction.response.send_modal(IllustratorModal(self))
+
+            async def no_callback(interaction):
+                self.state["illustrator"] = None
+                self.step = WizardStep.CONFIRM
+                await interaction.response.defer()
+                await self.update()
+
+            yes_btn.callback = yes_callback
+            no_btn.callback = no_callback
+
+            self.add_item(yes_btn)
+            self.add_item(no_btn)
+
+        # Finish button only at confirm step
         self.finish_button.disabled = (self.step != WizardStep.CONFIRM)
         self.add_item(self.finish_button)
 
@@ -113,9 +138,16 @@ class AddSingleWizardView(ui.View):
                 color=discord.Color.blurple(),
             )
 
+        if self.step == WizardStep.ILLUSTRATOR:
+            return discord.Embed(
+                title="Step 7 — Illustrator",
+                description="Do you want to add an illustrator for this card?",
+                color=discord.Color.blurple(),
+            )
+
         if self.step == WizardStep.CONFIRM:
             embed = discord.Embed(
-                title="Step 7 — Confirm",
+                title="Step 8 — Confirm",
                 description="Review all details and click **Finish**.",
                 color=discord.Color.green(),
             )
@@ -128,6 +160,7 @@ class AddSingleWizardView(ui.View):
                 )
 
             return embed
+
 
     async def add_series_select(self):
         async with self.bot.db.acquire() as conn:
@@ -180,15 +213,19 @@ class AddSingleWizardView(ui.View):
             if self.state["graded"]:
                 self.step = WizardStep.GRADED_FIELDS
             else:
-                self.step = WizardStep.CONFIRM
+                self.step = WizardStep.ILLUSTRATOR
             await interaction.response.defer()
             await self.update()
             return
 
         if self.step == WizardStep.GRADED_FIELDS:
-            self.step = WizardStep.CONFIRM
+            self.step = WizardStep.ILLUSTRATOR
             await interaction.response.defer()
             await self.update()
+            return
+
+        if self.step == WizardStep.ILLUSTRATOR:
+            await interaction.response.defer()
             return
 
         if self.step == WizardStep.CONFIRM:
@@ -230,7 +267,7 @@ class ConditionSelect(ui.Select):
         self.wizard.state["condition"] = cond
         self.wizard.state["graded"] = cond == "Graded"
 
-        self.wizard.step = WizardStep.GRADED_FIELDS if self.wizard.state["graded"] else WizardStep.CONFIRM
+        self.wizard.step = WizardStep.GRADED_FIELDS if self.wizard.state["graded"] else WizardStep.ILLUSTRATOR
 
         await interaction.response.defer()
         await self.wizard.update()
@@ -307,6 +344,21 @@ class CustomGradeModal(ui.Modal, title="Enter Custom Grade"):
 
     async def on_submit(self, interaction: discord.Interaction):
         self.wizard.state["grade"] = self.grade.value.strip()
+        await interaction.response.defer()
+        await self.wizard.update()
+
+
+class IllustratorModal(ui.Modal, title="Card Illustrator"):
+    illustrator = ui.TextInput(label="Illustrator Name", required=True)
+
+    def __init__(self, wizard: AddSingleWizardView):
+        super().__init__()
+        self.wizard = wizard
+
+    async def on_submit(self, interaction: discord.Interaction):
+        self.wizard.state["illustrator"] = self.illustrator.value.strip()
+        self.step = WizardStep.CONFIRM
+        self.wizard.step = WizardStep.CONFIRM
         await interaction.response.defer()
         await self.wizard.update()
 
@@ -494,10 +546,9 @@ class ImageDecisionView(ui.View):
                 singles_channel = None
 
             if singles_channel:
-                # Fetch card details
                 async with self.bot.db.acquire() as conn:
                     card = await conn.fetchrow("""
-                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        SELECT pokemon_name, condition, price, series, set_name,illustrator, image_link
                         FROM inventory
                         WHERE inventory_id = $1
                     """, rows[0]["inventory_id"])
@@ -513,6 +564,7 @@ class ImageDecisionView(ui.View):
                 embed.add_field(name="Price", value=f"${card['price']}", inline=False)
                 embed.add_field(name="Series", value=card["series"], inline=False)
                 embed.add_field(name="Set", value=card["set_name"], inline=False)
+                embed.add_field(name="illustrator", value=card["illustrator"], inline=False)
 
                 if card["image_link"]:
                     embed.set_thumbnail(url=card["image_link"])
@@ -595,10 +647,9 @@ class ImageDecisionView(ui.View):
                 singles_channel = None
 
             if singles_channel:
-                # Fetch card details
                 async with self.bot.db.acquire() as conn:
                     card = await conn.fetchrow("""
-                        SELECT pokemon_name, condition, price, series, set_name, image_link
+                        SELECT pokemon_name, condition, price, series, set_name, illustrator, image_link
                         FROM inventory
                         WHERE inventory_id = $1
                     """, rows[0]["inventory_id"])
@@ -614,8 +665,7 @@ class ImageDecisionView(ui.View):
                 embed.add_field(name="Price", value=f"${card['price']}", inline=False)
                 embed.add_field(name="Series", value=card["series"], inline=False)
                 embed.add_field(name="Set", value=card["set_name"], inline=False)
-
-                # No thumbnail here — card has no image
+                embed.add_field(name="Illustrator", value=card["illustrator"], inline=False)
 
                 await singles_channel.send(content=ping_text, embed=embed)
 
@@ -636,13 +686,13 @@ async def insert_card_into_db(state, bot, guild_id):
                 csv_id, pokemon_name, series, set_name, card_number,
                 variant, rarity, price, graded, grading_company, grade,
                 quantity_available, image_link, condition,
-                reserved, reserved_until, date_added, guild_id
+                date_added, illustrator, guild_id
             )
             VALUES (
                 'manual_add', $1, $2, $3, $4,
                 $5, $6, $7, $8, $9, $10,
                 $11, $12, $13,
-                0, NULL, CURRENT_DATE, $14
+                CURRENT_DATE, $14, $15
             )
             """,
             state["pokemon_name"],
@@ -658,6 +708,7 @@ async def insert_card_into_db(state, bot, guild_id):
             state["quantity_available"],
             state["image_link"],
             state["condition"],
+            state["illustrator"],
             guild_id
         )
 
@@ -691,6 +742,9 @@ async def insert_card_into_db(state, bot, guild_id):
             if f["set_name"] and f["set_name"] != state["set_name"]:
                 match = False
 
+            if f.get("illustrator") and f["illustrator"].lower() not in (state["illustrator"] or "").lower():
+                match = False
+
             if not match:
                 continue
 
@@ -705,6 +759,7 @@ async def insert_card_into_db(state, bot, guild_id):
                         f"Series: {state['series']}\n"
                         f"Set: {state['set_name']}\n"
                         f"Condition: {state['condition']}\n"
+                        f"Illustrator: {state['illustrator'] or '—'}\n"
                         f"Price: ${state['price']}"
                     ),
                     color=discord.Color.green()

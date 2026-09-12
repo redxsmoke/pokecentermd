@@ -2,8 +2,6 @@ import discord
 from discord.ext import commands
 import datetime
 
-
-
 # =====================================================================
 # HELPERS
 # =====================================================================
@@ -34,7 +32,8 @@ async def fetch_orders_with_items(interaction: discord.Interaction, status: str)
                 o.date_received,
                 o.cancelled_reason,
                 o.buyer_name,
-                o.shipping_address
+                o.shipping_address,
+                o.applied_reward
             FROM orders o
             WHERE o.order_status = $1
             ORDER BY o.order_id DESC;
@@ -85,7 +84,7 @@ def format_items_list(items) -> str:
 
 
 # =====================================================================
-# REFUND CONFIRMATION VIEW
+# REFUND CONFIRMATION VIEW (ADMIN)
 # =====================================================================
 class RefundConfirmView(discord.ui.View):
     def __init__(self, interaction: discord.Interaction, order: dict):
@@ -95,6 +94,8 @@ class RefundConfirmView(discord.ui.View):
 
     @discord.ui.button(label="Yes, refund", style=discord.ButtonStyle.danger)
     async def yes_refund(self, inner: discord.Interaction, button: discord.ui.Button):
+
+        # --- UPDATE ORDER STATUS ---
         async with inner.client.db.acquire() as conn:
             await conn.execute(
                 """
@@ -106,6 +107,24 @@ class RefundConfirmView(discord.ui.View):
                 self.order["order_id"]
             )
 
+        # ⭐ RESTORE REWARD IF APPLIED
+        applied_reward = self.order.get("applied_reward")
+        if applied_reward:
+            async with inner.client.db.acquire() as conn:
+                reward = await conn.fetchrow(
+                    """
+                    SELECT reward_id, guild_id, category
+                    FROM guild_rewards
+                    WHERE name = $1 AND guild_id = $2
+                    """,
+                    applied_reward,
+                    inner.guild_id
+                )
+
+                if reward:
+                    await restore_reward_usage(inner.client.db, reward, self.order["user_id"])
+
+        # --- NOTIFY BUYER ---
         try:
             buyer = await inner.client.fetch_user(self.order["user_id"])
             await buyer.send(
@@ -121,6 +140,7 @@ class RefundConfirmView(discord.ui.View):
         except Exception:
             pass
 
+        # --- ADMIN CONFIRMATION ---
         refund_embed = discord.Embed(
             title=f"Order #{self.order['order_id']} Refunded",
             description=(
@@ -150,8 +170,6 @@ class RefundConfirmView(discord.ui.View):
             embed=cancel_embed,
             view=None
         )
-
-
 # =====================================================================
 # TRACKING NUMBER MODAL (ADMIN)
 # =====================================================================
@@ -179,6 +197,7 @@ class AdminTrackingModal(discord.ui.Modal, title="Add Tracking Number"):
                 self.tracking_number.value
             )
 
+        # Notify buyer
         try:
             buyer = await interaction.client.fetch_user(self.order["user_id"])
             await buyer.send(
@@ -224,6 +243,7 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
 
     async def on_submit(self, interaction: discord.Interaction):
         async with interaction.client.db.acquire() as conn:
+
             # --- RESTORE INVENTORY FOR THIS ORDER ---
             items = await conn.fetch(
                 """
@@ -245,6 +265,21 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                     item["quantity"]
                 )
 
+            # ⭐ RESTORE REWARD IF APPLIED (NEW TABLES + SAFETY)
+            applied_reward = self.order.get("applied_reward")
+            if applied_reward:
+                reward = await conn.fetchrow(
+                    """
+                    SELECT *
+                    FROM guild_rewards
+                    WHERE name = $1 AND guild_id = $2;
+                    """,
+                    applied_reward,
+                    interaction.guild_id
+                )
+                if reward:
+                    await restore_reward_usage(interaction.client.db, reward, self.order["user_id"])
+
             # --- UPDATE ORDER STATUS ---
             await conn.execute(
                 """
@@ -257,6 +292,7 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
                 self.reason.value
             )
 
+        # Notify buyer
         try:
             buyer = await interaction.client.fetch_user(self.order["user_id"])
             await buyer.send(
@@ -286,7 +322,7 @@ class AdminCancelOrderModal(discord.ui.Modal, title="Cancel Order"):
 
 
 # =====================================================================
-# SEARCH ORDER MODAL (NEW)
+# SEARCH ORDER MODAL (ADMIN)
 # =====================================================================
 class SearchOrderModal(discord.ui.Modal, title="Search Order by ID"):
     order_id = discord.ui.TextInput(
@@ -334,7 +370,8 @@ class SearchOrderModal(discord.ui.Modal, title="Search Order by ID"):
                     o.date_received,
                     o.cancelled_reason,
                     o.buyer_name,
-                    o.shipping_address
+                    o.shipping_address,
+                    o.applied_reward
                 FROM orders o
                 WHERE o.order_id = $1;
                 """,
@@ -381,8 +418,6 @@ class SearchOrderModal(discord.ui.Modal, title="Search Order by ID"):
         self.parent_view.add_buttons_for_order(order_dict)
 
         await interaction.response.edit_message(embed=embed, view=self.parent_view)
-
-
 # =====================================================================
 # MAIN ADMIN VIEW FOR /admin manage_orders
 # =====================================================================
@@ -433,7 +468,7 @@ class ManageOrdersView(discord.ui.View):
                 discord.SelectOption(
                     label="Orders Awaiting Shipment",
                     description="Paid orders not yet shipped",
-                    value="awaiting"
+                    value="paid"
                 ),
                 discord.SelectOption(
                     label="Delivered Orders",
@@ -445,7 +480,6 @@ class ManageOrdersView(discord.ui.View):
                     description="View all cancelled orders",
                     value="cancelled"
                 ),
-                # ⭐ NEW OPTION — Search by Order ID
                 discord.SelectOption(
                     label="Search by Order ID",
                     description="Search for a specific order",
@@ -464,24 +498,24 @@ class ManageOrdersView(discord.ui.View):
         async def callback(self, interaction: discord.Interaction):
             mode = self.values[0]
 
-            # ⭐ NEW: search mode triggers modal
+            # Search mode → open modal
             if mode == "search":
                 await interaction.response.send_modal(SearchOrderModal(self.parent_view))
                 return
 
-            # Existing behavior
+            # Normal mode → update pages
             self.parent_view.mode = mode
             self.parent_view.page = 0
             await self.parent_view.update(interaction)
 
     # -----------------------------------------------------------------
-    # EMBED BUILDER (UPDATED WITH BUYER NAME + ADDRESS)
+    # EMBED BUILDER
     # -----------------------------------------------------------------
     def build_embed_for_order(self, order: dict) -> discord.Embed:
         mode = self.mode
 
         display_mode = (
-            "Awaiting Shipment" if mode == "awaiting"
+            "Awaiting Shipment" if mode == "paid"
             else mode.capitalize()
         )
 
@@ -495,6 +529,7 @@ class ManageOrdersView(discord.ui.View):
 
         buyer_name = order.get("buyer_name") or "Not Provided"
         shipping_address = order.get("shipping_address") or "Not Provided"
+        reward_text = order.get("applied_reward") or "None"
 
         embed.add_field(
             name="Order",
@@ -503,11 +538,14 @@ class ManageOrdersView(discord.ui.View):
                 f"**Buyer:** {user_mention}\n"
                 f"**Buyer Name:** {buyer_name}\n"
                 f"**Shipping Address:** {shipping_address}\n"
+                f"**Reward Applied:** {reward_text}\n"
                 f"**Status:** {order['order_status']}\n"
             ),
             inline=False
         )
-        if mode in ("shipped", "unpaid", "awaiting", "delivered"):
+
+        # Financials
+        if mode in ("shipped", "unpaid", "paid", "delivered"):
             embed.add_field(
                 name="Financials",
                 value=(
@@ -520,7 +558,8 @@ class ManageOrdersView(discord.ui.View):
                 inline=False
             )
 
-        if mode == "awaiting":
+        # Awaiting Shipment
+        if mode == "paid":
             embed.add_field(
                 name="Shipping",
                 value=(
@@ -532,6 +571,7 @@ class ManageOrdersView(discord.ui.View):
                 inline=False
             )
 
+        # Unpaid
         elif mode == "unpaid":
             embed.add_field(
                 name="Order Timing",
@@ -539,6 +579,7 @@ class ManageOrdersView(discord.ui.View):
                 inline=False
             )
 
+        # Shipped
         elif mode == "shipped":
             embed.add_field(
                 name="Shipping",
@@ -555,6 +596,7 @@ class ManageOrdersView(discord.ui.View):
                 inline=False
             )
 
+        # Delivered
         elif mode == "delivered":
             embed.add_field(
                 name="Shipping",
@@ -571,14 +613,12 @@ class ManageOrdersView(discord.ui.View):
                 inline=False
             )
 
+        # Cancelled
         elif mode == "cancelled":
             reason = order.get("cancelled_reason") or "None"
             total = order.get("total", 0)
 
-            if reason.lower() == "refunded":
-                amount_label = "Refunded Amount"
-            else:
-                amount_label = "Amount"
+            amount_label = "Refunded Amount" if reason.lower() == "refunded" else "Amount"
 
             embed.add_field(
                 name="Cancellation",
@@ -598,14 +638,14 @@ class ManageOrdersView(discord.ui.View):
         return embed
 
     # -----------------------------------------------------------------
-    # UPDATE VIEW (RESTORED)
+    # UPDATE VIEW (REQUIRED)
     # -----------------------------------------------------------------
     async def update(self, interaction: discord.Interaction):
         if self.mode == "shipped":
             self.pages = self.shipped_orders
         elif self.mode == "unpaid":
             self.pages = self.unpaid_orders
-        elif self.mode == "awaiting":
+        elif self.mode == "paid":
             self.pages = self.awaiting_orders
         elif self.mode == "delivered":
             self.pages = self.delivered_orders
@@ -614,7 +654,7 @@ class ManageOrdersView(discord.ui.View):
 
         if not self.pages:
             display_mode = (
-                "Awaiting Shipment" if self.mode == "awaiting"
+                "Awaiting Shipment" if self.mode == "paid"
                 else self.mode.capitalize()
             )
             embed = discord.Embed(
@@ -648,7 +688,6 @@ class ManageOrdersView(discord.ui.View):
                 "cancel_order_admin",
                 "next_order",
                 "previous_order",
-                # REMOVED: "search_order_id"
             ):
                 self.remove_item(child)
 
@@ -668,21 +707,15 @@ class ManageOrdersView(discord.ui.View):
             self.add_item(AddTrackingButton(order))
             self.add_item(CancelOrderButton(order))
 
-        elif mode == "awaiting":
+        elif mode == "paid":
             self.add_item(MarkShippedButton(order))
             self.add_item(AddTrackingButton(order))
             self.add_item(IssueRefundButton(order))
 
         elif mode == "delivered":
             self.add_item(IssueRefundButton(order))
-        # cancelled: no buttons
 
-        # ⭐ REMOVED: SearchOrderButton
-        # (Search is now handled via dropdown)
-
-        # -----------------------------------------------------------------
-        # PAGINATION BUTTONS
-        # -----------------------------------------------------------------
+        # Pagination
         next_btn = NextOrderButton(self)
         prev_btn = PreviousOrderButton(self)
 
@@ -696,10 +729,6 @@ class ManageOrdersView(discord.ui.View):
         self.add_item(prev_btn)
         self.add_item(next_btn)
 
-
-# -----------------------------------------------------------------
-# PAGINATION BUTTON CLASSES
-# -----------------------------------------------------------------
 class NextOrderButton(discord.ui.Button):
     def __init__(self, parent_view):
         super().__init__(
@@ -985,28 +1014,60 @@ class CancelOrderButton(discord.ui.Button):
 # =====================================================================
 # REMOVED: SEARCH ORDER BUTTON
 # =====================================================================
-# (Search is now handled via dropdown option "search")
+# (Search is now handled via dropdown option "search")# =====================================================================
+# REWARD USAGE RESTORE HELPER
+# =====================================================================
+async def restore_reward_usage(db, reward, user_id):
+    """
+    Decrements usage for limited_use rewards when an order is cancelled or refunded.
+    Ensures times_used never goes below zero.
+    Uses new tables: guild_rewards + user_rewards.
+    """
+    # Only limited_use rewards track usage
+    if reward.get("category") != "limited_use":
+        return
 
+    reward_id = reward["reward_id"]
+    guild_id = reward["guild_id"]
+
+    async with db.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE user_rewards
+            SET times_used = GREATEST(times_used - 1, 0)
+            WHERE user_id = $1 AND guild_id = $2 AND reward_id = $3
+            """,
+            user_id,
+            guild_id,
+            reward_id
+        )
 
 # =====================================================================
-# ENTRY FUNCTION FOR /admin manage_orders
+# ENTRY POINT FOR /admin manage_orders
 # =====================================================================
+
 async def start_manage_orders(interaction: discord.Interaction):
+    """
+    Entry point for /admin manage_orders.
+    Fetches all order categories and displays the ManageOrdersView.
+    """
+
     shipped = await fetch_orders_with_items(interaction, "Shipped")
-    unpaid = await fetch_orders_with_items(interaction, "Pending")
+    unpaid = await fetch_orders_with_items(interaction, "Unpaid")
     awaiting = await fetch_orders_with_items(interaction, "Paid")
     delivered = await fetch_orders_with_items(interaction, "Delivered")
     cancelled = await fetch_orders_with_items(interaction, "Cancelled")
 
     view = ManageOrdersView(
         interaction,
-        shipped_orders=shipped,
-        unpaid_orders=unpaid,
-        awaiting_orders=awaiting,
-        delivered_orders=delivered,
-        cancelled_orders=cancelled
+        shipped,
+        unpaid,
+        awaiting,
+        delivered,
+        cancelled
     )
 
+    # Build first page
     if shipped:
         first_order = shipped[0]
         embed = view.build_embed_for_order(first_order)
@@ -1023,3 +1084,13 @@ async def start_manage_orders(interaction: discord.Interaction):
         view=view,
         ephemeral=True
     )
+
+# =====================================================================
+# COG SETUP
+# =====================================================================
+async def setup(bot):
+    from Commands.Admin.manage_orders import ManageOrders  # adjust import if needed
+    await bot.add_cog(ManageOrders(bot))
+
+
+
