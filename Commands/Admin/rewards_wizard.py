@@ -1,4 +1,5 @@
 import discord
+import datetime
 
 # ---------------------------------------------------------
 # ENTRY POINT — /admin manage_rewards → Create Reward
@@ -84,26 +85,62 @@ class RewardRequirementsModal(discord.ui.Modal, title="Reward Requirements"):
                 )
 
         # -------------------------
-        # BUILD DATA
+        # BUILD BASE DATA
         # -------------------------
-        raw_days = getattr(self, "days", None).value if hasattr(self, "days") else None
-        if raw_days is None or raw_days.strip() == "":
-            expires_days = None
-        else:
-            expires_days = raw_days.strip()
-
         data = {
             "category": self.category,
             "required_level": getattr(self, "level", None).value if hasattr(self, "level") else None,
-            "expires_days": expires_days,
+            "expires_days": getattr(self, "days", None).value if hasattr(self, "days") else None,
             "max_uses": getattr(self, "max_uses", None).value if hasattr(self, "max_uses") else None,
         }
 
+        # -------------------------
+        # NEXT STEP → EXPIRATION SELECT VIEW
+        # -------------------------
         await interaction.response.send_message(
-            "Select reward action:",
-            view=RewardActionView(data),
+            "Select expiration:",
+            view=RewardExpirationView(data),
             ephemeral=True
         )
+
+
+# ---------------------------------------------------------
+# STEP 2b — EXPIRATION SELECT VIEW (ALL REWARD TYPES)
+# ---------------------------------------------------------
+class RewardExpirationSelect(discord.ui.Select):
+    def __init__(self, data):
+        self.data = data
+        options = [
+            discord.SelectOption(label="Never", value="never"),
+            discord.SelectOption(label="1 day", value="1"),
+            discord.SelectOption(label="7 days", value="7"),
+            discord.SelectOption(label="30 days", value="30"),
+            discord.SelectOption(label="60 days", value="60"),
+            discord.SelectOption(label="90 days", value="90"),
+        ]
+        super().__init__(placeholder="Select expiration...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        choice = self.values[0]
+
+        if choice == "never":
+            expiration_date = datetime.datetime(9999, 1, 1)
+        else:
+            expiration_date = datetime.datetime.utcnow() + datetime.timedelta(days=int(choice))
+
+        self.data["expiration_date"] = expiration_date
+
+        await interaction.response.send_message(
+            "Select reward action:",
+            view=RewardActionView(self.data),
+            ephemeral=True
+        )
+
+
+class RewardExpirationView(discord.ui.View):
+    def __init__(self, data):
+        super().__init__(timeout=300)
+        self.add_item(RewardExpirationSelect(data))
 
 
 # ---------------------------------------------------------
@@ -122,7 +159,6 @@ class RewardActionSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         action = self.values[0]
 
-        # FREE SHIPPING HAS NO MODAL → SKIP DIRECTLY
         if action == "free_shipping":
             self.data["action"] = "free_shipping"
             self.data["value"] = None
@@ -133,7 +169,6 @@ class RewardActionSelect(discord.ui.Select):
                 ephemeral=True
             )
 
-        # OTHER ACTIONS REQUIRE A MODAL
         await interaction.response.send_modal(RewardActionValueModal(self.data, action))
 
 
@@ -161,10 +196,6 @@ class RewardActionValueModal(discord.ui.Modal, title="Reward Value"):
             self.add_item(self.value)
 
     async def on_submit(self, interaction: discord.Interaction):
-
-        # -------------------------
-        # VALIDATION
-        # -------------------------
         if hasattr(self, "value"):
             v = self.value.value.strip()
 
@@ -189,9 +220,6 @@ class RewardActionValueModal(discord.ui.Modal, title="Reward Value"):
                         ephemeral=True
                     )
 
-        # -------------------------
-        # BUILD DATA
-        # -------------------------
         self.data["action"] = self.action
         self.data["value"] = getattr(self, "value", None).value if hasattr(self, "value") else None
 
@@ -242,10 +270,6 @@ class RewardMinTotalModal(discord.ui.Modal, title="Minimum Order Total"):
         self.add_item(self.min_total)
 
     async def on_submit(self, interaction: discord.Interaction):
-
-        # -------------------------
-        # VALIDATION
-        # -------------------------
         mt = self.min_total.value.strip()
         try:
             fv = float(mt)
@@ -260,9 +284,6 @@ class RewardMinTotalModal(discord.ui.Modal, title="Minimum Order Total"):
                 ephemeral=True
             )
 
-        # -------------------------
-        # BUILD DATA
-        # -------------------------
         self.data["min_order_total"] = self.min_total.value
         await send_summary(interaction, self.data)
 
@@ -282,6 +303,13 @@ async def send_summary(interaction: discord.Interaction, data: dict):
     embed.add_field(name="Required Level", value=str(data.get("required_level", "N/A")), inline=False)
     embed.add_field(name="Expires (days)", value=str(data.get("expires_days", "N/A")), inline=False)
     embed.add_field(name="Max Uses", value=str(data.get("max_uses", "N/A")), inline=False)
+
+    exp_date = data.get("expiration_date")
+    if exp_date:
+        embed.add_field(name="Expiration Date", value=str(exp_date), inline=False)
+    else:
+        embed.add_field(name="Expiration Date", value="N/A", inline=False)
+
     embed.add_field(name="Min Order Total", value=str(data.get("min_order_total", "Any")), inline=False)
 
     view = RewardConfirmView(data)
@@ -313,24 +341,16 @@ class RewardConfirmView(discord.ui.View):
 # ---------------------------------------------------------
 async def save_reward_to_db(interaction: discord.Interaction, data: dict):
     async with interaction.client.db.acquire() as conn:
-
-        # -------------------------
-        # CLEAN PARSED VALUES
-        # -------------------------
         required_level = int(data["required_level"]) if data.get("required_level") else None
         max_uses = int(data["max_uses"]) if data.get("max_uses") else None
         min_order_total = float(data["min_order_total"]) if data.get("min_order_total") else None
 
-        # expiration_date: convert expires_days → timestamp
-        expires_days = data.get("expires_days")
-        if expires_days:
-            expiration_date_sql = f"NOW() + ({int(expires_days)} * INTERVAL '1 day')"
+        expiration_date = data.get("expiration_date")
+        if expiration_date:
+            expiration_date_sql = f"'{expiration_date.strftime('%Y-%m-%d %H:%M:%S')}'"
         else:
             expiration_date_sql = "NULL"
 
-        # -------------------------
-        # INSERT INTO NEW guild_rewards SCHEMA
-        # -------------------------
         reward_row = await conn.fetchrow(
             f"""
             INSERT INTO guild_rewards (
@@ -371,9 +391,6 @@ async def save_reward_to_db(interaction: discord.Interaction, data: dict):
 
         reward_id = reward_row["reward_id"]
 
-    # ---------------------------------------------------------
-    # EMBEDDED SUCCESS MESSAGE
-    # ---------------------------------------------------------
     success_embed = discord.Embed(
         title="🎉 Reward Created!",
         description="Your reward has been successfully saved and is now active.",
@@ -546,7 +563,7 @@ async def start_delete_reward_flow(interaction: discord.Interaction, reward_id: 
     async with interaction.client.db.acquire() as conn:
         reward = await conn.fetchrow(
             """
-            SELECT name, category, type
+            SELECT name, category, type, expiration_date
             FROM guild_rewards
             WHERE reward_id = $1 AND guild_id = $2
             """,
@@ -566,7 +583,8 @@ async def start_delete_reward_flow(interaction: discord.Interaction, reward_id: 
         description=(
             f"Are you sure you want to delete **{reward['name']}**?\n\n"
             f"Category: `{reward['category']}`\n"
-            f"Type: `{reward['type']}`\n\n"
+            f"Type: `{reward['type']}`\n"
+            f"Expiration: `{reward['expiration_date']}`\n\n"
             "**This action cannot be undone.**"
         ),
         color=discord.Color.red()
@@ -588,7 +606,6 @@ async def start_delete_reward_flow(interaction: discord.Interaction, reward_id: 
                     btn_interaction.guild.id
                 )
 
-                # NEW SCHEMA: delete user reward usage
                 await conn.execute(
                     """
                     DELETE FROM user_rewards
@@ -626,3 +643,4 @@ __all__ = [
     "start_update_reward_wizard",
     "start_delete_reward_wizard",
 ]
+

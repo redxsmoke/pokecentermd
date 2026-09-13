@@ -209,8 +209,6 @@ class Inventory(commands.Cog):
             embed.add_field(name="Condition", value=row["condition"])
             embed.add_field(name="Variant", value=row["variant"] or "—")
             embed.add_field(name="Rarity", value=row["rarity"] or "—")
-
-            # ⭐ NEW — Illustrator now shown in /shop output
             embed.add_field(name="Illustrator", value=row["illustrator"] or "—", inline=False)
 
             if row["image_link"]:
@@ -420,13 +418,38 @@ class Inventory(commands.Cog):
             self.add_item(self.filters_button)
             self.add_item(self.clear_filters)
 
+   
+            view_online_button = discord.ui.Button(
+                label="🌍 View Inventory Online",
+                style=discord.ButtonStyle.link,
+                url="https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152?screenTitle=Inventory&type=standard_v2&initial=false",
+                row=3
+            )
+
+            self.add_item(view_online_button)
+
+
+
         async def update(self, interaction: discord.Interaction):
             embeds, files = self.pages[self.page]
+
+            # ⭐ ONLY add hyperlink on the LAST PAGE, LAST EMBED
+            if self.page == len(self.pages) - 1:
+                last_embed = embeds[-1]
+                last_embed.description = (
+                    (last_embed.description or "") +
+                    "\n\n[Click here to view our inventory online]"
+                    "(https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152"
+                    "?screenTitle=Inventory&type=standard_v2&initial=false)"
+                )
+
             discord_files = [
                 discord.File(path, filename=filename)
                 for path, filename in files
             ]
+
             self.build_dropdowns()
+
             await interaction.response.edit_message(
                 embeds=embeds,
                 attachments=discord_files,
@@ -470,7 +493,6 @@ class Inventory(commands.Cog):
                     await interaction.response.send_modal(PokemonSearchModal(self))
                     return
 
-         
                 if selected == "illustrator":
                     await interaction.response.send_modal(IllustratorSearchModal(self))
                     return

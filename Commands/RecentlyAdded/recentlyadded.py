@@ -2,6 +2,11 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+import shop_state
+from Commands.Inventory.inventory import Inventory
+from Commands.Cart.cart import CheckoutStartView
+
+
 class RecentlyAdded(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
@@ -12,7 +17,45 @@ class RecentlyAdded(commands.Cog):
     )
     async def recentlyadded(self, interaction: discord.Interaction):
 
-        # Step 1: Ask user to pick a range
+        # ---------------------------------------------------------
+        # SHOP BLOCK CHECKS — EXACTLY MATCHING /shop
+        # ---------------------------------------------------------
+        runtime = interaction.client.get_cog("ClaimSaleRuntime")
+        if runtime and await runtime.is_shop_blocked(interaction.guild.id):
+            embed = discord.Embed(
+                title="🚫 Shop Temporarily Closed",
+                description=(
+                    "A **claim sale** is starting shortly or is currently in progress.\n\n"
+                    "The shop is closed during claim sales. Please try again after the claim sale ends."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        if not shop_state.SHOP_OPEN:
+            if shop_state.SHOP_CLOSE_REASON == "show":
+                desc = (
+                    "We are currently **at a show**, and the shop is temporarily closed.\n\n"
+                    "Please check back after the event!"
+                )
+            else:
+                desc = (
+                    "The shop is currently **undergoing maintenance**.\n\n"
+                    "Please try again later."
+                )
+
+            embed = discord.Embed(
+                title="🚫 Shop Closed",
+                description=desc,
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        # ---------------------------------------------------------
+        # STEP 1 — Ask user to pick a time range
+        # ---------------------------------------------------------
         options = [
             discord.SelectOption(label="Today", value="today"),
             discord.SelectOption(label="Past 7 Days", value="past_7"),
@@ -31,16 +74,24 @@ class RecentlyAdded(commands.Cog):
 
         embed = discord.Embed(
             title="Recently Added",
-            description="Select a time range to view newly added cards.",
+            description=(
+                "Select a time range to view newly added cards.\n\n"
+                "[Click here to view our inventory online]"
+                "(https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152"
+                "?screenTitle=Inventory&type=standard_v2&initial=false)"
+            ),
             color=discord.Color.blue()
         )
 
-        await interaction.response.send_message(embed=embed, view=view)
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
+        # ---------------------------------------------------------
+        # CALLBACK — Build query + use InventoryView (same as /shop)
+        # ---------------------------------------------------------
         async def callback(inter: discord.Interaction):
             range_value = select.values[0]
 
-            # Step 2: Build WHERE clause
+            # Build WHERE clause
             where_clauses = ["quantity_available >= 1"]
             params = []
 
@@ -55,13 +106,12 @@ class RecentlyAdded(commands.Cog):
                 where_clauses.append("date_added >= NOW() - INTERVAL '30 days'")
 
             query = f"""
-                SELECT inventory_id, csv_id, pokemon_name, series, set_name,
-                       card_number, variant, price, rarity,
-                       graded, grading_company, grade,
-                       quantity_available, image_link, condition
+                SELECT inventory_id, pokemon_name, series, set_name,
+                       card_number, variant, rarity, price,
+                       quantity_available, condition, illustrator, image_link
                 FROM inventory
                 WHERE {' AND '.join(where_clauses)}
-                ORDER BY pokemon_name ASC;
+                ORDER BY price ASC;
             """
 
             async with self.bot.db.acquire() as conn:
@@ -70,30 +120,40 @@ class RecentlyAdded(commands.Cog):
             if not rows:
                 embed = discord.Embed(
                     title="Recently Added",
-                    description="No cards found for the selected time range.",
+                    description=(
+                        "No cards found for the selected time range.\n\n"
+                        "[Click here to view our inventory online]"
+                        "(https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152"
+                        "?screenTitle=Inventory&type=standard_v2&initial=false)"
+                    ),
                     color=discord.Color.red()
                 )
                 await inter.response.edit_message(embed=embed, view=None)
                 return
 
-            # Step 3: Build pages using Inventory cog's existing method
+            # ---------------------------------------------------------
+            # USE INVENTORY COG — EXACT SAME FLOW AS /shop
+            # ---------------------------------------------------------
             inventory_cog = self.bot.get_cog("Inventory")
+
             pages, inventory_ids = inventory_cog.build_gallery_pages(rows)
 
-            # Step 4: Build filter options (same as /shop)
+            # Filter options identical to /shop
             conditions = await inventory_cog.get_distinct_values("condition", inter.guild.id)
             series_list = await inventory_cog.get_distinct_values("series", inter.guild.id)
             variants = await inventory_cog.get_distinct_values("variant", inter.guild.id)
             rarities = await inventory_cog.get_distinct_values("rarity", inter.guild.id)
+            illustrators = await inventory_cog.get_distinct_values("illustrator", inter.guild.id)
 
             filter_options = {
                 "condition": conditions,
                 "series": series_list,
                 "variant": variants,
                 "rarity": rarities,
+                "illustrator": illustrators,
             }
 
-            # Step 5: Build InventoryView (same UI as /shop)
+            # Build InventoryView — EXACT SAME UI AS /shop
             view2 = inventory_cog.InventoryView(
                 bot=self.bot,
                 base_pokemon_name=None,

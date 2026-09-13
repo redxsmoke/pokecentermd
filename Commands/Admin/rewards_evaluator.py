@@ -12,49 +12,48 @@ async def apply_rewards(
     guild_id: int,
     user_id: int,
     user_level: int,
-    order_total: float,
-    shipping_cost: float
+    order_total: float,      # subtotal + tax
+    shipping_cost: float,
+    subtotal: float,         # correct discount base
+    reward                   # <-- NEW: the specific reward the user clicked
 ) -> Dict[str, Any]:
     """
-    Evaluates all active rewards for a guild and applies the best one.
-    Returns:
-        {
-            "final_total": float,
-            "final_shipping": float,
-            "applied_reward": {...} or None
-        }
+    Applies ONLY the reward selected by the user.
     """
 
-    rewards = await fetch_active_rewards(db, guild_id)
+    # Validate eligibility
+    ok = await reward_is_eligible(
+        db,
+        reward,
+        user_id,
+        guild_id,
+        user_level,
+        order_total
+    )
 
-    best_reward = None
-    best_new_total = order_total
-    best_new_shipping = shipping_cost
+    if not ok:
+        # Reward not eligible → return original totals
+        return {
+            "final_total": round(order_total, 2),
+            "final_shipping": round(shipping_cost, 2),
+            "applied_reward": None
+        }
 
-    for reward in rewards:
-        if not await reward_is_eligible(db, reward, user_id, guild_id, user_level, order_total):
-            continue
-
-        new_total, new_shipping = apply_reward_action(
-            reward,
-            order_total,
-            shipping_cost
-        )
-
-        # Pick the reward that gives the lowest final total
-        if new_total < best_new_total or (new_total == best_new_total and new_shipping < best_new_shipping):
-            best_reward = reward
-            best_new_total = new_total
-            best_new_shipping = new_shipping
+    # Apply ONLY the selected reward
+    new_total, new_shipping = apply_reward_action(
+        reward,
+        order_total,
+        shipping_cost,
+        subtotal
+    )
 
     # Track usage if needed
-    if best_reward:
-        await track_reward_usage(db, best_reward, user_id, guild_id)
+    await track_reward_usage(db, reward, user_id, guild_id)
 
     return {
-        "final_total": round(best_new_total, 2),
-        "final_shipping": round(best_new_shipping, 2),
-        "applied_reward": best_reward
+        "final_total": round(new_total, 2),
+        "final_shipping": round(new_shipping, 2),
+        "applied_reward": reward
     }
 
 
@@ -145,7 +144,7 @@ async def reward_is_eligible(
 # ---------------------------------------------------------
 # APPLY REWARD ACTION
 # ---------------------------------------------------------
-def apply_reward_action(reward, order_total: float, shipping_cost: float):
+def apply_reward_action(reward, order_total: float, shipping_cost: float, subtotal: float):
     reward_type = reward["type"]
     value = reward["value"]
 
@@ -157,12 +156,12 @@ def apply_reward_action(reward, order_total: float, shipping_cost: float):
 
     elif reward_type == "percent_off":
         pct = float(value) / 100.0
-        discount = order_total * pct
-        new_total = max(order_total - discount, 0.0)
+        discount = subtotal * pct
+        new_total = max(subtotal - discount, 0.0)
 
     elif reward_type == "flat_off":
         discount = float(value)
-        new_total = max(order_total - discount, 0.0)
+        new_total = max(subtotal - discount, 0.0)
 
     return new_total, new_shipping
 

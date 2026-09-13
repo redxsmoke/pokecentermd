@@ -815,6 +815,13 @@ class RewardApplyView(discord.ui.View):
         super().__init__(timeout=300)
         self.bot = bot
         self.user_id = user_id
+
+        # Store original values for display
+        self.original_subtotal = subtotal
+        self.original_tax = tax
+        self.original_shipping = shipping_cost
+
+        # Working values (may be discounted)
         self.subtotal = subtotal
         self.tax = tax
         self.shipping_cost = shipping_cost
@@ -838,7 +845,7 @@ class RewardApplyView(discord.ui.View):
                 self.user_id,
                 guild_id,
                 user_level,
-                self.subtotal + self.tax
+                self.original_subtotal + self.original_tax
             )
             if ok:
 
@@ -857,12 +864,10 @@ class RewardApplyView(discord.ui.View):
 
                     used = row["times_used"] if row else 0
 
-                    # ⭐ convert reward to dict BEFORE adding fields
                     r = dict(r)
                     r["remaining_uses"] = r["max_uses"] - used
 
                 else:
-                    # ⭐ convert ALL rewards to dict
                     r = dict(r)
 
                 eligible.append(r)
@@ -873,28 +878,65 @@ class RewardApplyView(discord.ui.View):
         return len(eligible) > 0
 
     async def apply_selected_reward(self, interaction: discord.Interaction):
+        # ---------------------------------------------------------
+        # PREVENT REWARD STACKING
+        # ---------------------------------------------------------
+        if self.applied_reward is not None:
+            embed = discord.Embed(
+                title="Reward Already Applied",
+                description=(
+                    f"You already applied **{self.applied_reward['name']}**.\n\n"
+                    "Only **one reward** can be used per order."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
         reward = self.selected_reward
         if not reward:
             return
 
-        # ⭐ convert reward to dict BEFORE storing it
         reward = dict(reward)
 
-        new_total, new_shipping = apply_reward_action(
-            reward,
+        # ---------------------------------------------------------
+        # APPLY THE SELECTED REWARD
+        # ---------------------------------------------------------
+        result = await apply_rewards(
+            self.bot.db,
+            interaction.guild_id,
+            self.user_id,
+            await get_user_level(self.bot, self.user_id, interaction.guild_id),
             self.subtotal + self.tax,
-            self.shipping_cost
+            self.shipping_cost,
+            self.subtotal,
+            reward
         )
 
-        self.discounted_total = new_total
-        self.discounted_shipping = new_shipping
+        # result["final_total"] is discounted SUBTOTAL
+        discounted_subtotal = result["final_total"]
+        discounted_tax = round(discounted_subtotal * 0.06, 2)
+
+        # Update working values
+        self.subtotal = discounted_subtotal
+        self.tax = discounted_tax
+        self.discounted_shipping = result["final_shipping"]
         self.applied_reward = reward
 
-        await track_reward_usage(self.bot.db, reward, self.user_id, interaction.guild_id)
+        # ---------------------------------------------------------
+        # DISABLE ALL OTHER REWARD BUTTONS
+        # ---------------------------------------------------------
+        for item in self.children:
+            if isinstance(item, discord.ui.Button):
+                item.disabled = True
 
+        # ---------------------------------------------------------
+        # UPDATE FINALIZE VIEW
+        # ---------------------------------------------------------
+        new_total_for_finalize = self.subtotal + self.tax + self.discounted_shipping
         self.finalize_view.applied_reward = reward
-        self.finalize_view.discounted_total = new_total
-        self.finalize_view.shipping_cost = new_shipping
+        self.finalize_view.discounted_total = new_total_for_finalize
+        self.finalize_view.shipping_cost = self.discounted_shipping
 
         embed = self.build_updated_embed()
 
@@ -903,17 +945,14 @@ class RewardApplyView(discord.ui.View):
             view=self.finalize_view
         )
 
-    # ⭐⭐⭐ RESTORE REWARD IF CHECKOUT IS CANCELLED ⭐⭐⭐
     async def restore_if_applied(self):
         if self.applied_reward:
             reward = dict(self.applied_reward)
             await restore_reward_usage(self.bot.db, reward, self.user_id)
 
     def build_updated_embed(self):
-        original_total = self.subtotal + self.tax + self.shipping_cost
-
-        # ⭐ discounted_total ALREADY includes tax
-        new_total = self.discounted_total + self.discounted_shipping
+        original_total = self.original_subtotal + self.original_tax + self.original_shipping
+        new_total = self.subtotal + self.tax + self.discounted_shipping
 
         embed = discord.Embed(
             title="Reward Applied",
@@ -923,9 +962,9 @@ class RewardApplyView(discord.ui.View):
         embed.add_field(
             name="Original Breakdown",
             value=(
-                f"Subtotal: ${self.subtotal:.2f}\n"
-                f"Tax: ${self.tax:.2f}\n"
-                f"Shipping: ${self.shipping_cost:.2f}\n"
+                f"Subtotal: ${self.original_subtotal:.2f}\n"
+                f"Tax: ${self.original_tax:.2f}\n"
+                f"Shipping: ${self.original_shipping:.2f}\n"
                 f"**Original Total: ${original_total:.2f}**"
             ),
             inline=False
@@ -963,7 +1002,6 @@ class RewardApplyView(discord.ui.View):
         )
 
         return embed
-
 
 # =====================================================================
 # REWARD BUTTON
