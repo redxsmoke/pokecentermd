@@ -18,7 +18,7 @@ class MyOrders(commands.Cog):
         async with self.bot.db.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                SELECT admin_id, paypal_handle, venmo_handle
+                SELECT admin_id, paypal_handle, venmo_handle, cashapp_handle
                 FROM guild_settings
                 WHERE guild_id = $1;
                 """,
@@ -121,6 +121,7 @@ class MyOrders(commands.Cog):
                 """
                 INSERT INTO orders (
                     user_id,
+                    guild_id,
                     subtotal,
                     tax,
                     fee,
@@ -145,6 +146,7 @@ class MyOrders(commands.Cog):
                     $1,$2,$3,$4,$5,$6,
                     $7,$8,
                     $9,$10,
+                    $11,
                     NOW(),
                     'Pending',
                     NULL,
@@ -159,6 +161,7 @@ class MyOrders(commands.Cog):
                 RETURNING order_id;
                 """,
                 user_id,
+                interaction.guild.id,
                 subtotal,
                 tax,
                 fee,
@@ -189,6 +192,24 @@ class MyOrders(commands.Cog):
                     float(i["price"])
                 )
 
+        # ⭐ UPDATED: Correct claim-sale detection using inventory_id + user_id
+        async with interaction.client.db.acquire() as conn:
+            is_claim_sale = await conn.fetchval(
+                """
+                SELECT 1
+                FROM claim_sale_orders
+                WHERE inventory_id = $1
+                AND user_id = $2
+                LIMIT 1;
+                """,
+                items[0]["inventory_id"],
+                user_id
+            )
+
+        if is_claim_sale:
+            return order_id
+
+        # ⭐ ORIGINAL DM CODE (unchanged)
         item_lines = "\n".join(
             f"• {i['pokemon_name']} — x{i['quantity']} @ ${float(i['price']):.2f}"
             for i in items
@@ -206,7 +227,7 @@ class MyOrders(commands.Cog):
                 f"To manage this order (mark as **Paid**, **Shipped**, **Enter Tracking**, **Cancel**, etc.), "
                 f"use the command:\n"
                 f"**/admin manage_orders**\n\n"
-                f"This DM is informational only — all actions must be done using the admin-manage_orders command."
+                f"This DM is informational only. All actions must be done using the admin-manage_orders command."
             ),
             color=discord.Color.blue()
         )
@@ -234,6 +255,17 @@ class MyOrders(commands.Cog):
         description="View your past orders and their status."
     )
     async def myorders(self, interaction: discord.Interaction):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="Command Not Available in DMs",
+                    description="This command cannot be used in DMs.\n\nPlease run this command within the server.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
         user_id = interaction.user.id
 
         cutoff_date = datetime.datetime.utcnow() - datetime.timedelta(days=30)
@@ -274,6 +306,9 @@ class MyOrders(commands.Cog):
         config = await self.get_payment_settings(interaction.guild_id)
         admin_id = config["admin_id"]
 
+        for o in orders:
+            o["admin_id"] = admin_id
+
         active_orders = [
             o for o in orders
             if o["order_status"] in ("Pending", "Paid", "Shipped", "Not Received")
@@ -289,7 +324,7 @@ class MyOrders(commands.Cog):
             user_id,
             active_orders,
             archived_orders,
-            None,   
+            None,
             admin_id
         )
 
@@ -298,6 +333,7 @@ class MyOrders(commands.Cog):
             view=view,
             ephemeral=True
         )
+
 
 
 async def setup(bot):

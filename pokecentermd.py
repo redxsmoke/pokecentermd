@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 from Commands.BotSettings.admin_channel_helpers import get_singles_role
 
 
+
 # DB imports
 from db.connection import init_db, get_pool
 
@@ -46,6 +47,8 @@ class MyBot(commands.Bot):
             "Commands.Cart.cart",
             "Commands.Orders.myorderscommand",
             "Commands.Orders.myordersview",
+            "Commands.Admin.claim_sale_wizard",
+            "Commands.Admin.claim_sale_runtime",             
             "Commands.Admin.admincommands",
             "Commands.Admin.inventory_csv_import",
             "Commands.SellCards.sellcards",
@@ -58,7 +61,12 @@ class MyBot(commands.Bot):
             "Commands.Daily.dailycommand",
             "Commands.wishlist.mywishlist",
             "Commands.SinglesRole.singlesrole",
-            "Commands.RecentlyAdded.recentlyadded" 
+            "Commands.RecentlyAdded.recentlyadded",
+            "Commands.ShippingInfo.shipping_info",
+            "Commands.PokeTrivia.poketrivia",
+            "Commands.UserLevel.userlevel",
+            "Commands.Leaderboard.leaderboard"
+
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
@@ -229,6 +237,9 @@ async def on_member_join(member: discord.Member):
         "• **/mybadges** – View your badges\n"
         "• **/userbadges** – View other server members badges\n"
         "• **/upcomingshows** – see what shows we are attending soon!\n\n"
+        "• **/mylevel** – View your current level and EXP progress!\n\n"
+        "• **/leaderboard** – View level and number of pokemon caught leaderboard!\n\n"
+        "• **/shippinginfo** – Add a saved shipping aderss for faster checkout!\n\n"
         "To get a refresher about what commands the bot offers, use **/help**!"
     )
 
@@ -255,6 +266,9 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
     embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
     embed.add_field(name="👤 /userbadges", value="View other server members' badges", inline=False)
+    embed.add_field(name="🎚️ /mylevel", value="View your current level and EXP progress", inline=False)
+    embed.add_field(name="👑 /leaderboard", value="View level and number of pokemon caught leaderboard", inline=False)
+    embed.add_field(name="✉️ /shippinginfo", value="Add a saved shipping aderss for faster checkout", inline=False)
     embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
 
     embed.add_field(

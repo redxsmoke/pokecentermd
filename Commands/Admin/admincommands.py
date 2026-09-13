@@ -2,10 +2,19 @@ import discord
 from discord.ext import commands
 import shop_state
 
+# Inventory flows
 from Commands.Admin.inventory_csv_import import InventoryCSVImport
 from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
+from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
+
+# ⭐ NEW — Rewards Wizard
+from Commands.Admin.rewards_wizard import (
+    start_create_reward_wizard,
+    start_update_reward_wizard,
+    start_delete_reward_wizard
+)
 
 # Batch upload
 from Commands.Admin.batch_image_upload import batch_image_upload
@@ -21,26 +30,33 @@ from Commands.Admin.inventory_delete_single import (
     start_delete_single_flow_with_id
 )
 
+# Bot settings
 from Commands.BotSettings.bot_settings_menu import BotSettingsMenu
-
 from Commands.BotSettings.set_singles_role_slash import (
     set_singles_role_callback,
     singles_role_autocomplete
 )
 
+# Wishlist dashboard
 from Commands.Admin.wishlist_dashboard import (
     WishlistDashboardView,
     WishlistDetailsSelect
 )
 
+
+from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
+
+
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
+
         self.admin_group = discord.app_commands.Group(
             name="admin",
             description="Admin-only commands for managing the shop.",
-            default_permissions=discord.Permissions(administrator=True)
+            default_permissions=discord.Permissions(administrator=True),
+            guild_only=True
         )
 
     async def cog_load(self):
@@ -53,30 +69,43 @@ class AdminCommands(commands.Cog):
             description="Close the shop with a selected reason.",
             callback=self.closeshop
         )
+        closeshop_cmd.guild_only = True
 
         openshop_cmd = discord.app_commands.Command(
             name="openshop",
             description="Open the shop again.",
             callback=self.openshop
         )
+        openshop_cmd.guild_only = True
 
         manage_inventory_cmd = discord.app_commands.Command(
             name="manage_inventory",
             description="Manage inventory (add/update/delete).",
             callback=self.manage_inventory
         )
+        manage_inventory_cmd.guild_only = True
 
         manage_orders_cmd = discord.app_commands.Command(
             name="manage_orders",
             description="Manage orders by status.",
             callback=self.manage_orders
         )
+        manage_orders_cmd.guild_only = True
+
+        # ⭐ NEW — Manage Rewards
+        manage_rewards_cmd = discord.app_commands.Command(
+            name="manage_rewards",
+            description="Create, update, or delete rewards.",
+            callback=self.manage_rewards
+        )
+        manage_rewards_cmd.guild_only = True
 
         update_single_cmd = discord.app_commands.Command(
             name="update_single",
             description="Search for a card by Pokémon name.",
             callback=self.update_single
         )
+        update_single_cmd.guild_only = True
         update_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
         activate_single_cmd = discord.app_commands.Command(
@@ -84,6 +113,7 @@ class AdminCommands(commands.Cog):
             description="Reactivate a hidden inventory item.",
             callback=self.activate_single
         )
+        activate_single_cmd.guild_only = True
         activate_single_cmd.autocomplete("card")(self.inactive_inventory_autocomplete)
 
         deactivate_single_cmd = discord.app_commands.Command(
@@ -91,6 +121,7 @@ class AdminCommands(commands.Cog):
             description="Hide an inventory item so it no longer appears in update_single.",
             callback=self.deactivate_single
         )
+        deactivate_single_cmd.guild_only = True
         deactivate_single_cmd.autocomplete("card")(self.inventory_autocomplete)
 
         delete_single_cmd = discord.app_commands.Command(
@@ -98,6 +129,7 @@ class AdminCommands(commands.Cog):
             description="Permanently delete a card from inventory.",
             callback=self.delete_single
         )
+        delete_single_cmd.guild_only = True
         delete_single_cmd.autocomplete("card")(self.all_inventory_autocomplete)
 
         set_singles_role_cmd = discord.app_commands.Command(
@@ -105,29 +137,29 @@ class AdminCommands(commands.Cog):
             description="Set the Singles notification role (admin only).",
             callback=set_singles_role_callback
         )
+        set_singles_role_cmd.guild_only = True
         set_singles_role_cmd.autocomplete("role")(singles_role_autocomplete)
-        self.admin_group.add_command(set_singles_role_cmd)
 
         bot_settings_cmd = discord.app_commands.Command(
             name="bot_settings",
             description="Configure bot settings.",
             callback=self.bot_settings
         )
+        bot_settings_cmd.guild_only = True
 
         wishlist_dashboard_cmd = discord.app_commands.Command(
             name="wishlist_dashboard",
             description="Admin-only: View wishlist dashboard.",
             callback=self.wishlist_dashboard
         )
+        wishlist_dashboard_cmd.guild_only = True
 
-        # -----------------------------
-        # Batch upload
-        # -----------------------------
         batch_upload_cmd = discord.app_commands.Command(
             name="batch_image_upload",
             description="Batch upload images for cards missing images.",
             callback=batch_image_upload
         )
+        batch_upload_cmd.guild_only = True
 
         # -----------------------------
         # Register commands
@@ -136,20 +168,21 @@ class AdminCommands(commands.Cog):
         self.admin_group.add_command(openshop_cmd)
         self.admin_group.add_command(manage_inventory_cmd)
         self.admin_group.add_command(manage_orders_cmd)
+
+        # ⭐ NEW — Manage Rewards
+        self.admin_group.add_command(manage_rewards_cmd)
+
         self.admin_group.add_command(update_single_cmd)
         self.admin_group.add_command(activate_single_cmd)
         self.admin_group.add_command(deactivate_single_cmd)
         self.admin_group.add_command(delete_single_cmd)
         self.admin_group.add_command(wishlist_dashboard_cmd)
-
-        # NEW — bot settings dropdown
         self.admin_group.add_command(bot_settings_cmd)
-
-        # Batch upload
         self.admin_group.add_command(batch_upload_cmd)
 
         # Add group to bot
         self.bot.tree.add_command(self.admin_group)
+
     # ---------------------------------------------------------
     # BOT SETTINGS DROPDOWN HANDLER
     # ---------------------------------------------------------
@@ -387,7 +420,7 @@ class AdminCommands(commands.Cog):
 
                 elif action == "add_single":
                     await start_add_single_wizard(inner_interaction, inner_interaction.client)
-                    await inner_interaction.followup.send("Add Single wizard started.", ephemeral=True)
+                    await inner_interaction.followup.send("Add Single wizard started. Please complete the wizard in the ADMIN channel.", ephemeral=True)
                     return
 
                 elif action == "upload_csv":
@@ -441,6 +474,45 @@ class AdminCommands(commands.Cog):
         await interaction.response.send_message(
             "Choose an inventory action:",
             view=InventoryActionView(),
+            ephemeral=True
+        )
+
+    # ---------------------------------------------------------
+    # ⭐ NEW — /admin manage_rewards
+    # ---------------------------------------------------------
+    async def manage_rewards(self, interaction: discord.Interaction):
+        class RewardActionSelect(discord.ui.Select):
+            def __init__(self):
+                options = [
+                    discord.SelectOption(label="Create Reward", value="create"),
+                    discord.SelectOption(label="Update Reward", value="update"),
+                    discord.SelectOption(label="Delete Reward", value="delete"),
+                ]
+                super().__init__(placeholder="Select a reward action", options=options)
+
+            async def callback(self, inner_interaction: discord.Interaction):
+                action = self.values[0]
+
+                if action == "create":
+                    await start_create_reward_wizard(inner_interaction)
+                    return
+
+                if action == "update":
+                    await start_update_reward_wizard(inner_interaction)
+                    return
+
+                if action == "delete":
+                    await start_delete_reward_wizard(inner_interaction)
+                    return
+
+        class RewardActionView(discord.ui.View):
+            def __init__(self):
+                super().__init__(timeout=120)
+                self.add_item(RewardActionSelect())
+
+        await interaction.response.send_message(
+            "Choose a reward action:",
+            view=RewardActionView(),
             ephemeral=True
         )
 

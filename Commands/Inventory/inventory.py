@@ -10,6 +10,64 @@ from Commands.Inventory.inventory_filter import FilterTypeView
 GALLERY_PAGE_SIZE = 6
 log = logging.getLogger("inventory")
 
+
+
+class IllustratorSearchModal(discord.ui.Modal, title="Search Illustrator"):
+    def __init__(self, parent_view):
+        super().__init__()
+        self.parent_view = parent_view
+
+        self.illustrator_name = discord.ui.TextInput(
+            label="Illustrator Name",
+            required=True,
+            max_length=100,
+            placeholder="Enter illustrator name (fuzzy matching enabled)"
+        )
+        self.add_item(self.illustrator_name)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        name = self.illustrator_name.value.strip().lower()
+
+        inventory_cog = self.parent_view.bot.get_cog("Inventory")
+
+        self.parent_view.filters["illustrator"] = name
+
+        rows = await inventory_cog.run_query(
+            pokemon_name=self.parent_view.base_pokemon_name,
+            set_name=self.parent_view.base_set_name,
+            filters=self.parent_view.filters,
+            guild_id=interaction.guild.id
+        )
+
+        if not rows:
+            embed = discord.Embed(
+                title="No Results",
+                description=f"No results found for illustrator **{chosen}**.",
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+
+        # Rebuild pages
+        self.parent_view.pages, self.parent_view.inventory_ids = inventory_cog.build_gallery_pages(rows)
+        self.parent_view.page = 0
+
+        embeds, files = self.parent_view.pages[0]
+        discord_files = [
+            discord.File(path, filename=filename)
+            for path, filename in files
+        ]
+
+        self.parent_view.build_dropdowns()
+
+        await interaction.response.edit_message(
+            embeds=embeds,
+            attachments=discord_files,
+            view=self.parent_view
+        )
+
+
 class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
     def __init__(self, parent_view):
         super().__init__()
@@ -63,9 +121,112 @@ class PokemonSearchModal(discord.ui.Modal, title="Search Pokémon"):
             attachments=discord_files,
             view=self.parent_view
         )
+
+
 class Inventory(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+
+    async def run_query(self, pokemon_name=None, set_name=None, filters=None, guild_id=None):
+
+        query = """
+            SELECT
+                inventory_id,
+                pokemon_name,
+                series,
+                set_name,
+                card_number,
+                variant,
+                rarity,
+                price,
+                quantity_available,
+                condition,
+                illustrator,
+                image_link
+            FROM inventory
+            WHERE guild_id = $1
+              AND is_active = TRUE
+              AND quantity_available >= 1
+        """
+
+        params = [guild_id]
+
+        if pokemon_name:
+            query += f" AND LOWER(pokemon_name) LIKE LOWER(${len(params)+1})"
+            params.append(f"%{pokemon_name}%")
+
+        if set_name:
+            query += f" AND LOWER(set_name) LIKE LOWER(${len(params)+1})"
+            params.append(f"%{set_name}%")
+
+        if filters:
+            for key, value in filters.items():
+
+                if key == "illustrator":
+                    query += f" AND LOWER(illustrator) LIKE LOWER(${len(params)+1})"
+                    params.append(f"%{value}%")
+                    continue
+
+                query += f" AND {key} = ${len(params)+1}"
+                params.append(value)
+
+        query += " ORDER BY price ASC"
+
+        async with self.bot.db.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+
+        return rows
+
+
+    async def get_distinct_values(self, column_name: str, guild_id: int):
+        query = f"""
+            SELECT DISTINCT {column_name}
+            FROM inventory
+            WHERE quantity_available >= 1
+              AND {column_name} IS NOT NULL
+              AND guild_id = $1
+            ORDER BY {column_name} ASC;
+        """
+        async with self.bot.db.acquire() as conn:
+            rows = await conn.fetch(query, guild_id)
+        return [r[column_name] for r in rows]
+
+
+    def build_gallery_pages(self, rows):
+        pages = []
+        inventory_ids = []
+        current_embeds = []
+        current_files = []
+
+        for row in rows:
+            embed = discord.Embed(
+                title=row["pokemon_name"],
+                description=f"{row['series']} — {row['set_name']}",
+                color=discord.Color.gold()
+            )
+
+            embed.add_field(name="Price", value=f"${row['price']}")
+            embed.add_field(name="Condition", value=row["condition"])
+            embed.add_field(name="Variant", value=row["variant"] or "—")
+            embed.add_field(name="Rarity", value=row["rarity"] or "—")
+            embed.add_field(name="Illustrator", value=row["illustrator"] or "—", inline=False)
+
+            if row["image_link"]:
+                embed.set_image(url=row["image_link"])
+
+            current_embeds.append(embed)
+            inventory_ids.append(row["inventory_id"])
+
+            if len(current_embeds) == GALLERY_PAGE_SIZE:
+                pages.append((current_embeds, current_files))
+                current_embeds = []
+                current_files = []
+
+        if current_embeds:
+            pages.append((current_embeds, current_files))
+
+        return pages, inventory_ids
+
 
     @app_commands.command(
         name="shop",
@@ -81,14 +242,25 @@ class Inventory(commands.Cog):
         pokemon_name: str = None,
         set_name: str = None
     ):
-
-        # ⭐ Prevent running inside DMs
         if interaction.guild is None:
             embed = discord.Embed(
                 title="Cannot Run in DMs",
                 description=(
                     "❌ The **/shop** command must be used **inside a server**.\n\n"
                     "Please run this command in the server where you want to browse the shop."
+                ),
+                color=discord.Color.red()
+            )
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+            return
+
+        runtime = interaction.client.get_cog("ClaimSaleRuntime")
+        if runtime and await runtime.is_shop_blocked(interaction.guild.id):
+            embed = discord.Embed(
+                title="🚫 Shop Temporarily Closed",
+                description=(
+                    "A **claim sale** is starting shortly or is currently in progress.\n\n"
+                    "The shop is closed during claim sales. Please try again after the claim sale ends."
                 ),
                 color=discord.Color.red()
             )
@@ -145,12 +317,14 @@ class Inventory(commands.Cog):
         series_list = await self.get_distinct_values("series", interaction.guild.id)
         variants = await self.get_distinct_values("variant", interaction.guild.id)
         rarities = await self.get_distinct_values("rarity", interaction.guild.id)
+        illustrators = await self.get_distinct_values("illustrator", interaction.guild.id)
 
         filter_options = {
             "condition": conditions,
             "series": series_list,
             "variant": variants,
             "rarity": rarities,
+            "illustrator": illustrators,
         }
 
         view = self.InventoryView(
@@ -175,115 +349,6 @@ class Inventory(commands.Cog):
             view=view,
             ephemeral=True
         )
-
-    async def run_query(self, pokemon_name=None, set_name=None, filters=None, guild_id=None):
-        where_clauses = ["quantity_available >= 1"]
-        params = []
-
-        if guild_id is not None:
-            where_clauses.append(f"guild_id = ${len(params)+1}")
-            params.append(guild_id)
-
-        if pokemon_name:
-            where_clauses.append(f"pokemon_name ILIKE ${len(params)+1}")
-            params.append(f"%{pokemon_name}%")
-
-        if set_name:
-            where_clauses.append(f"set_name ILIKE ${len(params)+1}")
-            params.append(f"%{set_name}%")
-
-        if filters:
-            if filters.get("condition"):
-                where_clauses.append(f"condition = ${len(params)+1}")
-                params.append(filters["condition"])
-
-            if filters.get("series"):
-                where_clauses.append(f"series = ${len(params)+1}")
-                params.append(filters["series"])
-
-            if filters.get("variant"):
-                where_clauses.append(f"variant = ${len(params)+1}")
-                params.append(filters["variant"])
-
-            if filters.get("rarity"):
-                where_clauses.append(f"rarity = ${len(params)+1}")
-                params.append(filters["rarity"])
-
-            if filters.get("set_name"):
-                where_clauses.append(f"set_name = ${len(params)+1}")
-                params.append(filters["set_name"])
-
-            if filters.get("set_bucket_AL"):
-                where_clauses.append("LEFT(set_name, 1) ~* '^[A-L]'")
-
-            if filters.get("set_bucket_MZ"):
-                where_clauses.append("(LEFT(set_name, 1) ~* '^[M-Z]' OR set_name = '151')")
-
-        query = f"""
-            SELECT inventory_id, csv_id, pokemon_name, series, set_name,
-                   card_number, variant, price, rarity,
-                   graded, grading_company, grade,
-                   quantity_available, image_link, condition
-            FROM inventory
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY pokemon_name ASC;
-        """
-
-        async with self.bot.db.acquire() as conn:
-            return await conn.fetch(query, *params)
-
-    async def get_distinct_values(self, column_name: str, guild_id: int):
-        query = f"""
-            SELECT DISTINCT {column_name}
-            FROM inventory
-            WHERE quantity_available >= 1
-              AND {column_name} IS NOT NULL
-              AND guild_id = $1
-            ORDER BY {column_name} ASC;
-        """
-        async with self.bot.db.acquire() as conn:
-            rows = await conn.fetch(query, guild_id)
-        return [r[column_name] for r in rows]
-
-    def build_gallery_pages(self, rows):
-        pages = []
-        inventory_ids = []
-        current_embeds = []
-        current_files = []
-
-        for row in rows:
-            inventory_ids.append(row["inventory_id"])
-
-            card_number = row["card_number"] or "—"
-            set_display = "Mew 151" if row["set_name"] == "151" else row["set_name"]
-
-            title = f"{row['pokemon_name']} #{card_number} — {set_display}"
-
-            embed = discord.Embed(title=title, color=discord.Color.gold())
-            if row["image_link"]:
-                embed.set_thumbnail(url=row["image_link"])
-
-            graded_text = "Yes" if row["graded"] else "No"
-
-            embed.description = (
-                "__**Card Details**__\n\n"
-                f"**Price:** ${row['price']}\n"
-                f"**Condition:** {row['condition'] or 'Near Mint'}\n"
-                f"**Graded:** {graded_text}\n"
-            )
-            embed.set_footer(text=f"Inventory ID: {row['inventory_id']}")
-
-            current_embeds.append(embed)
-
-            if len(current_embeds) == GALLERY_PAGE_SIZE:
-                pages.append((current_embeds, current_files))
-                current_embeds = []
-                current_files = []
-
-        if current_embeds:
-            pages.append((current_embeds, current_files))
-
-        return pages, inventory_ids
 
     class InventoryView(discord.ui.View):
         def __init__(self, bot, base_pokemon_name, base_set_name, filters, pages, inventory_ids, filter_options):
@@ -353,13 +418,38 @@ class Inventory(commands.Cog):
             self.add_item(self.filters_button)
             self.add_item(self.clear_filters)
 
+   
+            view_online_button = discord.ui.Button(
+                label="🌍 View Inventory Online",
+                style=discord.ButtonStyle.link,
+                url="https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152?screenTitle=Inventory&type=standard_v2&initial=false",
+                row=3
+            )
+
+            self.add_item(view_online_button)
+
+
+
         async def update(self, interaction: discord.Interaction):
             embeds, files = self.pages[self.page]
+
+            # ⭐ ONLY add hyperlink on the LAST PAGE, LAST EMBED
+            if self.page == len(self.pages) - 1:
+                last_embed = embeds[-1]
+                last_embed.description = (
+                    (last_embed.description or "") +
+                    "\n\n[Click here to view our inventory online]"
+                    "(https://app.dextcg.com/folders/99d3ec14-0435-419e-bf51-331a37821152"
+                    "?screenTitle=Inventory&type=standard_v2&initial=false)"
+                )
+
             discord_files = [
                 discord.File(path, filename=filename)
                 for path, filename in files
             ]
+
             self.build_dropdowns()
+
             await interaction.response.edit_message(
                 embeds=embeds,
                 attachments=discord_files,
@@ -386,6 +476,7 @@ class Inventory(commands.Cog):
                 discord.SelectOption(label="Series", value="series"),
                 discord.SelectOption(label="Variant", value="variant"),
                 discord.SelectOption(label="Rarity", value="rarity"),
+                discord.SelectOption(label="Illustrator", value="illustrator"),   
             ]
 
             filter_type_select = discord.ui.Select(
@@ -400,6 +491,10 @@ class Inventory(commands.Cog):
 
                 if selected == "pokemon_name":
                     await interaction.response.send_modal(PokemonSearchModal(self))
+                    return
+
+                if selected == "illustrator":
+                    await interaction.response.send_modal(IllustratorSearchModal(self))
                     return
 
                 view = FilterTypeView(

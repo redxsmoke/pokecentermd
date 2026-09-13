@@ -1,8 +1,21 @@
 import discord
 import logging
+from difflib import get_close_matches   
+from difflib import SequenceMatcher
+
+def fuzzy_match(a: str, b: str, threshold: float = 0.6) -> bool:
+    if not a or not b:
+        return False
+    ratio = SequenceMatcher(None, a.lower(), b.lower()).ratio()
+    return ratio >= threshold
+
+
+
+def fuzzy(value, choices):
+    matches = get_close_matches(value, choices, n=1, cutoff=0.4)
+    return matches[0] if matches else value
 
 log = logging.getLogger("inventory")
-
 
 class FilterTypeView(discord.ui.View):
     def __init__(
@@ -179,10 +192,24 @@ class FilterTypeView(discord.ui.View):
                 )
                 return
 
-            #
-            # NON-SERIES FILTERS
-            #
-            self.filters[filter_type] = value
+            # ⭐ Illustrator: use fuzzy matching against all illustrators,
+            # then let Inventory.run_query do fuzzy filtering on the chosen value.
+            if filter_type == "illustrator":
+                # User-selected value (e.g. "Yuka", "Yuka Mori")
+                search_value = value
+
+                # All known illustrators
+                illustrators = self.filter_options.get("illustrator", [])
+
+                # Pick the closest label to normalize typos,
+                # but keep the original search_value for fuzzy DB filtering.
+                normalized = fuzzy(search_value, illustrators)
+
+                # Store the normalized search term; Inventory.run_query
+                # should fuzzy-match this against row["illustrator"].
+                self.filters["illustrator"] = normalized
+            else:
+                self.filters[filter_type] = value
 
             inventory_cog = self.bot.get_cog("Inventory")
             rows2 = await inventory_cog.run_query(
@@ -241,3 +268,4 @@ class FilterTypeView(discord.ui.View):
             embed=embed,
             view=view2
         )
+
