@@ -228,73 +228,9 @@ class Inventory(commands.Cog):
         return pages, inventory_ids
 
 
-    @app_commands.command(
-        name="shop",
-        description="Browse the Shop! Apply filters after results appear."
-    )
-    @app_commands.describe(
-        pokemon_name="Search by Pokémon name",
-        set_name="Search by set name"
-    )
-    async def inventory(
-        self,
-        interaction: discord.Interaction,
-        pokemon_name: str = None,
-        set_name: str = None
-    ):
-        if interaction.guild is None:
-            embed = discord.Embed(
-                title="Cannot Run in DMs",
-                description=(
-                    "❌ The **/shop** command must be used **inside a server**.\n\n"
-                    "Please run this command in the server where you want to browse the shop."
-                ),
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        runtime = interaction.client.get_cog("ClaimSaleRuntime")
-        if runtime and await runtime.is_shop_blocked(interaction.guild.id):
-            embed = discord.Embed(
-                title="🚫 Shop Temporarily Closed",
-                description=(
-                    "A **claim sale** is starting shortly or is currently in progress.\n\n"
-                    "The shop is closed during claim sales. Please try again after the claim sale ends."
-                ),
-                color=discord.Color.red()
-            )
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-            return
-
-        try:
-            await interaction.response.defer(ephemeral=True)
-        except Exception as e:
-            log.error(f"defer() failed: {e}")
-            await interaction.followup.send("❌ Failed to start inventory.", ephemeral=True)
-            return
-
-        if not shop_state.SHOP_OPEN:
-            if shop_state.SHOP_CLOSE_REASON == "show":
-                desc = (
-                    "We are currently **at a show**, and the shop is temporarily closed.\n\n"
-                    "Please check back after the event!"
-                )
-            else:
-                desc = (
-                    "The shop is currently **undergoing maintenance**.\n\n"
-                    "Please try again later."
-                )
-
-            embed = discord.Embed(
-                title="🚫 Shop Closed",
-                description=desc,
-                color=discord.Color.red()
-            )
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            return
-
+    async def start_singles_inventory(self, interaction, pokemon_name, set_name):
         filters = {}
+
         rows = await self.run_query(
             pokemon_name=pokemon_name,
             set_name=set_name,
@@ -308,7 +244,7 @@ class Inventory(commands.Cog):
                 description="No available cards found.",
                 color=discord.Color.gold()
             )
-            await interaction.followup.send(embed=embed, ephemeral=True)
+            await interaction.followup.send(embed=embed)
             return
 
         pages, inventory_ids = self.build_gallery_pages(rows)
@@ -346,8 +282,7 @@ class Inventory(commands.Cog):
         await interaction.followup.send(
             embeds=embeds,
             files=discord_files,
-            view=view,
-            ephemeral=True
+            view=view
         )
 
     class InventoryView(discord.ui.View):

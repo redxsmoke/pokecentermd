@@ -8,6 +8,11 @@ from Commands.Admin.inventory_add_single_wizard import start_add_single_wizard
 from Commands.Admin.update_single_wizard import start_update_single_wizard
 from Commands.Admin.manageorders import start_manage_orders
 from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
+from Commands.Admin.inventory_add_sealed_wizard import start_add_sealed_wizard
+from Commands.Admin.inventory_update_sealed_wizard import start_update_sealed_wizard
+
+
+
 
 # ⭐ NEW — Rewards Wizard
 from Commands.Admin.rewards_wizard import (
@@ -50,7 +55,6 @@ from Commands.Admin.claim_sale_wizard import ClaimSaleCommands
 class AdminCommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-
 
         self.admin_group = discord.app_commands.Group(
             name="admin",
@@ -350,6 +354,8 @@ class AdminCommands(commands.Cog):
                     discord.SelectOption(label="Deactivate a single", value="deactivate_single"),
                     discord.SelectOption(label="Activate a single", value="activate_single"),
                     discord.SelectOption(label="Delete a single", value="delete_single"),
+                    discord.SelectOption(label="Add a sealed product", value="add_sealed"),  
+                    discord.SelectOption(label="Update sealed product", value="update_sealed"),  
                 ]
                 super().__init__(placeholder="Select an inventory action", options=options)
 
@@ -421,6 +427,19 @@ class AdminCommands(commands.Cog):
                 elif action == "add_single":
                     await start_add_single_wizard(inner_interaction, inner_interaction.client)
                     await inner_interaction.followup.send("Add Single wizard started. Please complete the wizard in the ADMIN channel.", ephemeral=True)
+                    return
+
+                elif action == "add_sealed": 
+                    await start_add_sealed_wizard(inner_interaction, inner_interaction.client)
+                    await inner_interaction.followup.send("Add Sealed Product wizard started. Please complete the wizard in the ADMIN channel.", ephemeral=True)
+                    return
+
+                elif action == "update_sealed":
+                    await start_update_sealed_wizard(inner_interaction)
+                    await inner_interaction.followup.send(
+                        "Update Sealed Product wizard started. Please complete the wizard in the ADMIN channel.",
+                        ephemeral=True
+                    )
                     return
 
                 elif action == "upload_csv":
