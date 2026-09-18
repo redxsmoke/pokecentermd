@@ -3,6 +3,8 @@ from discord.ext import commands
 from discord import app_commands
 
 POKEBALL_EMOJI = "<:Pokeball1:1540904892195930182>"
+POKETRIVIA_EMOJI = "<:PokeTrivia:1550328600170074163>"
+POKETRIVIA_IMAGE = "https://cdn.discordapp.com/attachments/1540905804293607435/1545631848284291092/card.jpg"
 
 
 class LeaderboardView(discord.ui.View):
@@ -40,6 +42,12 @@ class TabSelect(discord.ui.Select):
                 emoji=POKEBALL_EMOJI,
                 description="Ranked by total caught",
                 value="caught"
+            ),
+            discord.SelectOption(
+                label="Poké Trivia Winners",
+                emoji=POKETRIVIA_EMOJI,
+                description="Ranked by correct trivia answers",
+                value="trivia"
             ),
         ]
         super().__init__(placeholder="Select category…", min_values=1, max_values=1, options=options)
@@ -104,17 +112,15 @@ async def build_leaderboard_embed(bot, guild_id, scope, tab):
             for r in rows:
                 user = bot.get_user(r["user_id"])
                 name = user.name if user else f"User {r['user_id']}"
-                lines.append(
-                    f"{rank}. {name} | Lv {r['level']} | {r['exp']:,} EXP"
-                )
+                lines.append(f"{rank}. {name} | Lv {r['level']} | {r['exp']:,} EXP")
                 rank += 1
 
             desc = "\n".join(lines) if lines else "No data."
-
             title = "🏆 Level Leaderboard"
             title += " — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"
 
-            return discord.Embed(title=title, description=desc, color=discord.Color.gold())
+            embed = discord.Embed(title=title, description=desc, color=discord.Color.gold())
+            return embed
 
         # -------------------------
         # POKÉMON CAUGHT LEADERBOARD
@@ -143,19 +149,55 @@ async def build_leaderboard_embed(bot, guild_id, scope, tab):
             for r in rows:
                 user = bot.get_user(r["user_id"])
                 name = user.name if user else f"User {r['user_id']}"
-
-                # NON-WRAPPING SINGLE LINE
-                lines.append(
-                    f"{rank}. {name} | {POKEBALL_EMOJI} {r['total']:,}"
-                )
+                lines.append(f"{rank}. {name} | {POKEBALL_EMOJI} {r['total']:,}")
                 rank += 1
 
             desc = "\n".join(lines) if lines else "No data."
-
             title = f"{POKEBALL_EMOJI} Pokémon Caught Leaderboard"
             title += " — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"
 
-            return discord.Embed(title=title, description=desc, color=discord.Color.blue())
+            embed = discord.Embed(title=title, description=desc, color=discord.Color.blue())
+            return embed
+
+        # -------------------------
+        # POKÉ TRIVIA WINNERS LEADERBOARD
+        # -------------------------
+        if tab == "trivia":
+            if scope == "guild":
+                rows = await conn.fetch("""
+                    SELECT user_id, correct_answers
+                    FROM poke_trivia_winners
+                    WHERE guild_id = $1
+                    ORDER BY correct_answers DESC
+                    LIMIT 10
+                """, guild_id)
+            else:
+                rows = await conn.fetch("""
+                    SELECT user_id, SUM(correct_answers) AS total
+                    FROM poke_trivia_winners
+                    GROUP BY user_id
+                    ORDER BY total DESC
+                    LIMIT 10
+                """)
+
+            lines = []
+            rank = 1
+            for r in rows:
+                user = bot.get_user(r["user_id"])
+                name = user.name if user else f"User {r['user_id']}"
+
+                total = r["correct_answers"] if scope == "guild" else r["total"]
+
+                lines.append(f"{rank}. {name} | {POKETRIVIA_EMOJI} {total:,} correct answers")
+                rank += 1
+
+            desc = "\n".join(lines) if lines else "No trivia winners yet."
+            title = f"{POKETRIVIA_EMOJI} Poké Trivia Winners"
+            title += " — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"
+
+            embed = discord.Embed(title=title, description=desc, color=discord.Color.purple())
+            embed.set_thumbnail(url=POKETRIVIA_IMAGE)
+            return embed
 
 
 class Leaderboard(commands.Cog):
@@ -164,7 +206,7 @@ class Leaderboard(commands.Cog):
 
     @app_commands.command(
         name="leaderboard",
-        description="View the level and Pokémon caught leaderboards."
+        description="View the level, Pokémon caught, and trivia leaderboards."
     )
     async def leaderboard(self, interaction: discord.Interaction):
         embed = await build_leaderboard_embed(

@@ -98,7 +98,121 @@ class TriviaView(discord.ui.View):
             )
 
         # ============================================================
-        #   ⭐ LEVEL-UP CHECK (NEW)
+        #   RECORD TRIVIA WIN
+        # ============================================================
+        async with self.pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO poke_trivia_winners (user_id, guild_id, correct_answers)
+                VALUES ($1, $2, 1)
+                ON CONFLICT (user_id, guild_id)
+                DO UPDATE SET correct_answers = poke_trivia_winners.correct_answers + 1;
+                """,
+                interaction.user.id,
+                interaction.guild.id
+            )
+
+        # Fetch updated correct answer count
+        async with self.pool.acquire() as conn:
+            correct_count = await conn.fetchval(
+                """
+                SELECT correct_answers
+                FROM poke_trivia_winners
+                WHERE user_id = $1 AND guild_id = $2
+                """,
+                interaction.user.id,
+                interaction.guild.id
+            )
+
+        # ============================================================
+        #   ⭐ MASTER BALL REWARD AT 5 CORRECT ANSWERS
+        # ============================================================
+        if correct_count == 5:
+            async with self.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO user_pokemon_catch_items (user_id, guild_id, item_id, quantity)
+                    VALUES ($1, $2, 4, 1)
+                    ON CONFLICT (user_id, guild_id, item_id)
+                    DO UPDATE SET quantity = user_pokemon_catch_items.quantity + 1;
+                    """,
+                    interaction.user.id,
+                    interaction.guild.id
+                )
+
+            await interaction.channel.send(
+                embed=discord.Embed(
+                    title="🎉 Master Ball Earned!",
+                    description=f"{interaction.user.mention} has answered **5 trivia questions correctly** and earned a **Master Ball**!\n\nIt has been added to their bag.",
+                    color=discord.Color.purple()
+                )
+            )
+
+        # ============================================================
+        #   ⭐ BADGE REWARDS AT 10, 20, 50 CORRECT ANSWERS (WITH IMAGE)
+        # ============================================================
+        badge_rewards = {
+            10: "Jr Professor Badge",
+            20: "Seasoned Professor Badge",
+            50: "Legendary Professor Badge"
+        }
+
+        if correct_count in badge_rewards:
+            badge_name = badge_rewards[correct_count]
+
+            async with self.pool.acquire() as conn:
+                # Fetch badge_id + badge_url
+                badge_row = await conn.fetchrow(
+                    """
+                    SELECT badge_id, badge_url
+                    FROM badges
+                    WHERE LOWER(name) = LOWER($1)
+                    """,
+                    badge_name
+                )
+
+                if badge_row:
+                    badge_id = badge_row["badge_id"]
+                    badge_url = badge_row["badge_url"]
+
+                    # Check if user already has this badge
+                    existing = await conn.fetchval(
+                        """
+                        SELECT badge_award_id
+                        FROM user_badges
+                        WHERE user_id = $1 AND guild_id = $2 AND badge_id = $3
+                        """,
+                        interaction.user.id,
+                        interaction.guild.id,
+                        badge_id
+                    )
+
+                    if existing is None:
+                        # Award badge
+                        await conn.execute(
+                            """
+                            INSERT INTO user_badges (user_id, badge_id, guild_id, awarded_at, quantity)
+                            VALUES ($1, $2, $3, NOW(), 1)
+                            """,
+                            interaction.user.id,
+                            badge_id,
+                            interaction.guild.id
+                        )
+
+                        # Public announcement with badge image
+                        embed = discord.Embed(
+                            title="🏅 New Trivia Badge Earned!",
+                            description=f"{interaction.user.mention} has earned the **{badge_name}**!",
+                            color=discord.Color.gold()
+                        )
+
+                        if badge_url:
+                            embed.set_thumbnail(url=badge_url)
+
+                        await interaction.channel.send(embed=embed)
+
+        # ============================================================
+        #   ⭐ LEVEL-UP CHECK
         # ============================================================
         async with self.pool.acquire() as conn:
             new_xp = await conn.fetchval(
@@ -111,7 +225,6 @@ class TriviaView(discord.ui.View):
             new_xp,
             interaction.channel
         )
-        # ============================================================
 
         # Disable buttons for everyone after a correct answer
         for child in self.children:
@@ -137,6 +250,106 @@ class TriviaView(discord.ui.View):
         if self.no_winner_task is not None:
             self.no_winner_task.cancel()
             self.no_winner_task = None
+
+        # ============================================================
+        #   ⭐ BADGE REWARDS AT 10, 20, 50 CORRECT ANSWERS
+        # ============================================================
+        badge_rewards = {
+            10: "Jr Professor Badge",
+            20: "Seasoned Professor Badge",
+            50: "Legendary Professor Badge"
+        }
+
+        if correct_count in badge_rewards:
+            badge_name = badge_rewards[correct_count]
+
+            async with self.pool.acquire() as conn:
+                # Fetch badge_id
+                badge_row = await conn.fetchrow(
+                    """
+                    SELECT badge_id
+                    FROM badges
+                    WHERE LOWER(name) = LOWER($1)
+                    """,
+                    badge_name
+                )
+
+                if badge_row:
+                    badge_id = badge_row["badge_id"]
+
+                    # Check if user already has this badge
+                    existing = await conn.fetchval(
+                        """
+                        SELECT badge_award_id
+                        FROM user_badges
+                        WHERE user_id = $1 AND guild_id = $2 AND badge_id = $3
+                        """,
+                        interaction.user.id,
+                        interaction.guild.id,
+                        badge_id
+                    )
+
+                    if existing is None:
+                        # Award badge
+                        await conn.execute(
+                            """
+                            INSERT INTO user_badges (user_id, badge_id, guild_id, awarded_at, quantity)
+                            VALUES ($1, $2, $3, NOW(), 1)
+                            """,
+                            interaction.user.id,
+                            badge_id,
+                            interaction.guild.id
+                        )
+
+                        # Public announcement
+                        await interaction.channel.send(
+                            embed=discord.Embed(
+                                title="🏅 New Trivia Badge Earned!",
+                                description=f"{interaction.user.mention} has earned the **{badge_name}**!",
+                                color=discord.Color.gold()
+                            )
+                        )
+
+        # ============================================================
+        #   ⭐ LEVEL-UP CHECK
+        # ============================================================
+        async with self.pool.acquire() as conn:
+            new_xp = await conn.fetchval(
+                "SELECT exp FROM users WHERE user_id = $1",
+                interaction.user.id
+            )
+
+        await self.bot.level_up_manager.check_level_up(
+            interaction.user.id,
+            new_xp,
+            interaction.channel
+        )
+
+        # Disable buttons for everyone after a correct answer
+        for child in self.children:
+            if isinstance(child, discord.ui.Button):
+                child.disabled = True
+
+        await interaction.response.edit_message(view=self)
+
+        try:
+            await interaction.followup.send(
+                embed=discord.Embed(
+                    title="Correct Answer!",
+                    description=f"{interaction.user.mention} earned **{TRIVIA_EXP_REWARD} EXP**!",
+                    color=discord.Color.green()
+                ),
+                ephemeral=False,
+            )
+        except discord.HTTPException:
+            pass
+
+        await self.start_delete_timer_on_correct()
+
+        if self.no_winner_task is not None:
+            self.no_winner_task.cancel()
+            self.no_winner_task = None
+
 
 
 class TriviaButton(discord.ui.Button):

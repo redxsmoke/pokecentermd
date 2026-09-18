@@ -44,6 +44,8 @@ class MyBot(commands.Bot):
 
         extensions = [
             "Commands.Inventory.inventory",
+            "Commands.Inventory.inventory_sealed",
+            "Commands.Inventory.inventory_grouped",
             "Commands.Cart.cart",
             "Commands.Orders.myorderscommand",
             "Commands.Orders.myordersview",
@@ -65,7 +67,11 @@ class MyBot(commands.Bot):
             "Commands.ShippingInfo.shipping_info",
             "Commands.PokeTrivia.poketrivia",
             "Commands.UserLevel.userlevel",
-            "Commands.Leaderboard.leaderboard"
+            "Commands.Leaderboard.leaderboard",
+            "Commands.MyRewards.my_rewards",
+            "Commands.ReportBug.report_a_bug",
+            "Commands.OwnerCommands.manage_bugs",
+            "Commands.Pokedex.pokedex"
 
         ]
 
