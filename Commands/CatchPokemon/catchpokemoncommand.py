@@ -45,7 +45,7 @@ class CatchPokemon(commands.Cog):
 
             async with self.bot.db.acquire() as conn:
                 badge = await conn.fetchrow("""
-                    SELECT badge_id, name, emoji_name, emoji_id
+                    SELECT badge_id, name, badge_url
                     FROM badges
                     WHERE LOWER(name) = LOWER($1)
                 """, badge_name)
@@ -57,14 +57,14 @@ class CatchPokemon(commands.Cog):
                     interaction.guild.id
                 )
 
-                badge_emoji = f"<:{badge['emoji_name']}:{badge['emoji_id']}>"
-
                 embed = discord.Embed(
                     title="🎉 Badge Awarded!",
-                    description=f"{interaction.user.mention} earned the {badge_emoji} **{badge['name']}** badge!",
+                    description=f"{interaction.user.mention} earned the **{badge['name']}** badge!",
                     color=discord.Color.gold()
                 )
-                embed.set_thumbnail(url=interaction.user.display_avatar.url)
+
+                # Use badge_url instead of emoji
+                embed.set_thumbnail(url=badge["badge_url"])
 
                 await interaction.channel.send(embed=embed)
 

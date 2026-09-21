@@ -1,4 +1,3 @@
-# pokemon_rewards.py
 import random
 
 # ---------------------------------------------------------
@@ -29,6 +28,12 @@ REWARD_INTERVALS = {
         "interval": 75,
         "item_id": 3,
         "item_name": "Ultra Ball",
+        "quantity_func": weighted_random_amount
+    },
+    "master_ball": {
+        "interval": 200,
+        "item_id": 4,
+        "item_name": "Master Ball",
         "quantity_func": weighted_random_amount
     }
 }
