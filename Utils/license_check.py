@@ -3,6 +3,21 @@ import discord
 async def check_license(interaction: discord.Interaction):
     """Global license gate for ALL interactions."""
 
+    # ============================================================
+    # EXEMPT COMMANDS (ALWAYS ALLOWED EVEN IF LICENSE IS INACTIVE)
+    # ============================================================
+    exempt_commands = {
+        "manage_subscription",
+        "subscribe",
+        "billing",
+        "upgrade",
+        "downgrade"
+    }
+
+    # If the command is exempt, allow it immediately
+    if interaction.command and interaction.command.name in exempt_commands:
+        return True
+
     guild_id = interaction.guild_id
 
     # Allow DMs
