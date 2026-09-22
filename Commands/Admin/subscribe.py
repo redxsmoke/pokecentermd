@@ -192,7 +192,10 @@ class AdminSubscription(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="manage_subscription", description="Manage your server's subscription")
+    @app_commands.command(
+        name="manage_subscription",
+        description="Manage your server's subscription"
+    )
     @app_commands.default_permissions(administrator=True)
     async def manage_subscription(self, interaction: discord.Interaction):
 
@@ -202,17 +205,69 @@ class AdminSubscription(commands.Cog):
                 ephemeral=True
             )
 
-        vendor_id = 1
-        subscription_id = 1
-        stripe_subscription_id = "sub_12345"
+        # -----------------------------------------
+        # CONNECT TO DB
+        # -----------------------------------------
+        db = await asyncpg.connect(os.getenv("DATABASE_URL"))
 
-        view = SubscriptionButtons(vendor_id, subscription_id, stripe_subscription_id)
+        admin_id = interaction.user.id
+
+        # -----------------------------------------
+        # FETCH VENDOR RECORD
+        # -----------------------------------------
+        vendor = await db.fetchrow("""
+            SELECT vendor_id
+            FROM vendors
+            WHERE admin_id = $1
+        """, admin_id)
+
+        if not vendor:
+            await db.close()
+            return await interaction.response.send_message(
+                "No vendor record found for you. Please subscribe first.",
+                ephemeral=True
+            )
+
+        vendor_id = vendor["vendor_id"]
+
+        # -----------------------------------------
+        # FETCH SUBSCRIPTION RECORD
+        # -----------------------------------------
+        subscription = await db.fetchrow("""
+            SELECT subscription_id, stripe_subscription_id
+            FROM subscriptions
+            WHERE vendor_id = $1
+            ORDER BY subscription_id DESC
+            LIMIT 1
+        """, vendor_id)
+
+        if not subscription:
+            await db.close()
+            return await interaction.response.send_message(
+                "No active subscription found.",
+                ephemeral=True
+            )
+
+        subscription_id = subscription["subscription_id"]
+        stripe_subscription_id = subscription["stripe_subscription_id"]
+
+        await db.close()
+
+        # -----------------------------------------
+        # BUILD VIEW WITH REAL DB VALUES
+        # -----------------------------------------
+        view = SubscriptionButtons(
+            vendor_id,
+            subscription_id,
+            stripe_subscription_id
+        )
 
         await interaction.response.send_message(
             "Manage your subscription:",
             view=view,
             ephemeral=True
         )
+
 
 
 # ============================================================
