@@ -19,6 +19,12 @@ class SubscriptionButtons(discord.ui.View):
         self.subscription_id = subscription_id
         self.stripe_subscription_id = stripe_subscription_id
 
+        # If a subscription already exists, disable Subscribe
+        if self.subscription_id is not None:
+            for item in self.children:
+                if isinstance(item, discord.ui.Button) and item.label == "Subscribe":
+                    item.disabled = True
+
     async def get_db(self):
         return await asyncpg.connect(DATABASE_URL)
 
@@ -29,10 +35,21 @@ class SubscriptionButtons(discord.ui.View):
     async def subscribe(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "Only admins can subscribe.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Permission Denied",
+                description="Only admins can subscribe.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        # If subscription already exists, block re-subscribe
+        if self.subscription_id is not None:
+            embed = discord.Embed(
+                title="Already Subscribed",
+                description="You already have an active subscription for this server.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         guild_id = interaction.guild.id
         admin_id = interaction.user.id
@@ -88,10 +105,12 @@ class SubscriptionButtons(discord.ui.View):
 
         if not price_row:
             await db.close()
-            return await interaction.response.send_message(
-                "Pricing configuration error: No price found for tier 'premium'.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Pricing Error",
+                description="Pricing configuration error: No price found for tier 'premium'.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         price_id = price_row["price_id"]
 
@@ -102,8 +121,8 @@ class SubscriptionButtons(discord.ui.View):
             mode="subscription",
             customer=stripe_customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
-            success_url="https://yourdomain.com/success",
-            cancel_url="https://yourdomain.com/cancel",
+            success_url="https://checkout.stripe.dev/success",
+            cancel_url="https://checkout.stripe.dev/cancel",
             metadata={
                 "guild_id": str(guild_id),
                 "admin_id": str(admin_id),
@@ -113,10 +132,13 @@ class SubscriptionButtons(discord.ui.View):
 
         await db.close()
 
-        await interaction.response.send_message(
-            f"Click here to subscribe:\n{session.url}",
-            ephemeral=True
+        embed = discord.Embed(
+            title="Subscribe",
+            description=f"[Click here to subscribe]({session.url})",
+            color=discord.Color.green()
         )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # -------------------------
     # UNSUBSCRIBE BUTTON
@@ -125,20 +147,33 @@ class SubscriptionButtons(discord.ui.View):
     async def unsubscribe(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "Only admins can unsubscribe.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Permission Denied",
+                description="Only admins can unsubscribe.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        if not self.stripe_subscription_id:
+            embed = discord.Embed(
+                title="No Active Subscription",
+                description="There is no active subscription to cancel.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         stripe.Subscription.modify(
             self.stripe_subscription_id,
             cancel_at_period_end=True
         )
 
-        await interaction.response.send_message(
-            "Subscription will end at the end of the billing period.",
-            ephemeral=True
+        embed = discord.Embed(
+            title="Unsubscribe",
+            description="Subscription will end at the end of the current billing period.",
+            color=discord.Color.orange()
         )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # -------------------------
     # TURN ON AUTO RENEWAL
@@ -147,20 +182,33 @@ class SubscriptionButtons(discord.ui.View):
     async def auto_on(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "Only admins can modify auto-renewal.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Permission Denied",
+                description="Only admins can modify auto-renewal.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        if not self.stripe_subscription_id:
+            embed = discord.Embed(
+                title="No Subscription Found",
+                description="Cannot enable auto-renewal without an active subscription.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         stripe.Subscription.modify(
             self.stripe_subscription_id,
             cancel_at_period_end=False
         )
 
-        await interaction.response.send_message(
-            "Auto-renewal enabled.",
-            ephemeral=True
+        embed = discord.Embed(
+            title="Auto-Renewal Enabled",
+            description="Auto-renewal has been enabled for this subscription.",
+            color=discord.Color.green()
         )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     # -------------------------
     # TURN OFF AUTO RENEWAL
@@ -169,20 +217,33 @@ class SubscriptionButtons(discord.ui.View):
     async def auto_off(self, interaction: discord.Interaction, button: discord.ui.Button):
 
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "Only admins can modify auto-renewal.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Permission Denied",
+                description="Only admins can modify auto-renewal.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        if not self.stripe_subscription_id:
+            embed = discord.Embed(
+                title="No Subscription Found",
+                description="Cannot disable auto-renewal without an active subscription.",
+                color=discord.Color.red()
+            )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
         stripe.Subscription.modify(
             self.stripe_subscription_id,
             cancel_at_period_end=True
         )
 
-        await interaction.response.send_message(
-            "Auto-renewal disabled.",
-            ephemeral=True
+        embed = discord.Embed(
+            title="Auto-Renewal Disabled",
+            description="Auto-renewal has been disabled for this subscription.",
+            color=discord.Color.orange()
         )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ============================================================
@@ -200,74 +261,75 @@ class AdminSubscription(commands.Cog):
     async def manage_subscription(self, interaction: discord.Interaction):
 
         if not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message(
-                "Only admins can manage subscriptions.",
-                ephemeral=True
+            embed = discord.Embed(
+                title="Permission Denied",
+                description="Only admins can manage subscriptions.",
+                color=discord.Color.red()
             )
+            return await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        # -----------------------------------------
-        # CONNECT TO DB
-        # -----------------------------------------
-        db = await asyncpg.connect(os.getenv("DATABASE_URL"))
+        await interaction.response.defer(ephemeral=True)
 
+        db = await asyncpg.connect(DATABASE_URL)
         admin_id = interaction.user.id
 
-        # -----------------------------------------
-        # FETCH VENDOR RECORD
-        # -----------------------------------------
         vendor = await db.fetchrow("""
             SELECT vendor_id
             FROM vendors
             WHERE admin_id = $1
         """, admin_id)
 
-        if not vendor:
-            await db.close()
-            return await interaction.response.send_message(
-                "No vendor record found for you. Please subscribe first.",
-                ephemeral=True
-            )
+        if vendor:
+            vendor_id = vendor["vendor_id"]
+        else:
+            vendor_id = None
 
-        vendor_id = vendor["vendor_id"]
+        subscription = None
+        stripe_subscription_id = None
+        subscription_id = None
 
-        # -----------------------------------------
-        # FETCH SUBSCRIPTION RECORD
-        # -----------------------------------------
-        subscription = await db.fetchrow("""
-            SELECT subscription_id, stripe_subscription_id
-            FROM subscriptions
-            WHERE vendor_id = $1
-            ORDER BY subscription_id DESC
-            LIMIT 1
-        """, vendor_id)
+        if vendor_id is not None:
+            subscription = await db.fetchrow("""
+                SELECT subscription_id, stripe_subscription_id
+                FROM subscriptions
+                WHERE vendor_id = $1
+                ORDER BY subscription_id DESC
+                LIMIT 1
+            """, vendor_id)
 
-        if not subscription:
-            await db.close()
-            return await interaction.response.send_message(
-                "No active subscription found.",
-                ephemeral=True
-            )
-
-        subscription_id = subscription["subscription_id"]
-        stripe_subscription_id = subscription["stripe_subscription_id"]
+            if subscription:
+                subscription_id = subscription["subscription_id"]
+                stripe_subscription_id = subscription["stripe_subscription_id"]
 
         await db.close()
 
-        # -----------------------------------------
-        # BUILD VIEW WITH REAL DB VALUES
-        # -----------------------------------------
         view = SubscriptionButtons(
             vendor_id,
             subscription_id,
             stripe_subscription_id
         )
 
-        await interaction.response.send_message(
-            "Manage your subscription:",
+        if subscription is None:
+            embed = discord.Embed(
+                title="Subscription",
+                description=(
+                    "You do not currently have an active subscription.\n\n"
+                    "Use the **Subscribe** button below to start a subscription."
+                ),
+                color=discord.Color.blue()
+            )
+        else:
+            embed = discord.Embed(
+                title="Manage Subscription",
+                description="Use the buttons below to manage your existing subscription.",
+                color=discord.Color.green()
+            )
+
+        await interaction.followup.send(
+            embed=embed,
             view=view,
             ephemeral=True
         )
-
 
 
 # ============================================================

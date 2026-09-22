@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import os
 import discord
 import logging
@@ -5,6 +8,9 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from Commands.BotSettings.admin_channel_helpers import get_singles_role
 from Utils.daily_license_expiration import daily_license_expiration_task
+
+
+
 
 
 # DB imports
