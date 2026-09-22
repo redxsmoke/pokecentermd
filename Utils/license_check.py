@@ -46,6 +46,7 @@ async def check_license(interaction: discord.Interaction):
             title="Guild Not Registered",
             description="This guild is not registered to use the bot."
         )
+
         return False
 
     # Normalize license value
