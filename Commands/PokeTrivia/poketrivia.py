@@ -199,7 +199,6 @@ class TriviaView(discord.ui.View):
                             interaction.guild.id
                         )
 
-                        # Public announcement with badge image
                         embed = discord.Embed(
                             title="🏅 New Trivia Badge Earned!",
                             description=f"{interaction.user.mention} has earned the **{badge_name}**!",
@@ -226,13 +225,17 @@ class TriviaView(discord.ui.View):
             interaction.channel
         )
 
-        # Disable buttons for everyone after a correct answer
+        # ============================================================
+        #   DISABLE BUTTONS (AFTER EDIT)
+        # ============================================================
         for child in self.children:
             if isinstance(child, discord.ui.Button):
                 child.disabled = True
 
+        # FIRST edit the message (interaction still valid)
         await interaction.response.edit_message(view=self)
 
+        # THEN send followup
         try:
             await interaction.followup.send(
                 embed=discord.Embed(
@@ -250,108 +253,6 @@ class TriviaView(discord.ui.View):
         if self.no_winner_task is not None:
             self.no_winner_task.cancel()
             self.no_winner_task = None
-
-        # ============================================================
-        #   ⭐ BADGE REWARDS AT 10, 20, 50 CORRECT ANSWERS
-        # ============================================================
-        badge_rewards = {
-            10: "Jr Professor Badge",
-            20: "Seasoned Professor Badge",
-            50: "Legendary Professor Badge"
-        }
-
-        if correct_count in badge_rewards:
-            badge_name = badge_rewards[correct_count]
-
-            async with self.pool.acquire() as conn:
-                # Fetch badge_id
-                badge_row = await conn.fetchrow(
-                    """
-                    SELECT badge_id
-                    FROM badges
-                    WHERE LOWER(name) = LOWER($1)
-                    """,
-                    badge_name
-                )
-
-                if badge_row:
-                    badge_id = badge_row["badge_id"]
-
-                    # Check if user already has this badge
-                    existing = await conn.fetchval(
-                        """
-                        SELECT badge_award_id
-                        FROM user_badges
-                        WHERE user_id = $1 AND guild_id = $2 AND badge_id = $3
-                        """,
-                        interaction.user.id,
-                        interaction.guild.id,
-                        badge_id
-                    )
-
-                    if existing is None:
-                        # Award badge
-                        await conn.execute(
-                            """
-                            INSERT INTO user_badges (user_id, badge_id, guild_id, awarded_at, quantity)
-                            VALUES ($1, $2, $3, NOW(), 1)
-                            """,
-                            interaction.user.id,
-                            badge_id,
-                            interaction.guild.id
-                        )
-
-                        # Public announcement
-                        await interaction.channel.send(
-                            embed=discord.Embed(
-                                title="🏅 New Trivia Badge Earned!",
-                                description=f"{interaction.user.mention} has earned the **{badge_name}**!",
-                                color=discord.Color.gold()
-                            )
-                        )
-
-        # ============================================================
-        #   ⭐ LEVEL-UP CHECK
-        # ============================================================
-        async with self.pool.acquire() as conn:
-            new_xp = await conn.fetchval(
-                "SELECT exp FROM users WHERE user_id = $1",
-                interaction.user.id
-            )
-
-        await self.bot.level_up_manager.check_level_up(
-            interaction.user.id,
-            new_xp,
-            interaction.channel
-        )
-
-        # Disable buttons for everyone after a correct answer
-        for child in self.children:
-            if isinstance(child, discord.ui.Button):
-                child.disabled = True
-
-        await interaction.response.edit_message(view=self)
-
-        try:
-            await interaction.followup.send(
-                embed=discord.Embed(
-                    title="Correct Answer!",
-                    description=f"{interaction.user.mention} earned **{TRIVIA_EXP_REWARD} EXP**!",
-                    color=discord.Color.green()
-                ),
-                ephemeral=False,
-            )
-        except discord.HTTPException:
-            pass
-
-        await self.start_delete_timer_on_correct()
-
-        if self.no_winner_task is not None:
-            self.no_winner_task.cancel()
-            self.no_winner_task = None
-
-
-
 class TriviaButton(discord.ui.Button):
     def __init__(self, label: str, parent_view: TriviaView):
         super().__init__(label=label, style=discord.ButtonStyle.primary)
@@ -602,8 +503,6 @@ class PokeTriviaManager:
                 if channel.permissions_for(guild.me).send_messages:
                     return channel
         return None
-
-
 # ============================================================
 #   EXTENSION SETUP
 # ============================================================
@@ -616,3 +515,4 @@ async def setup(bot):
     # Start trivia manager
     trivia = PokeTriviaManager(bot, bot.db)
     trivia.start()
+

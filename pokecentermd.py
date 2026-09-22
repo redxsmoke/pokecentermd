@@ -4,7 +4,7 @@ import logging
 from discord.ext import commands
 from dotenv import load_dotenv
 from Commands.BotSettings.admin_channel_helpers import get_singles_role
-
+from Utils.daily_license_expiration import daily_license_expiration_task
 
 
 # DB imports
@@ -50,7 +50,7 @@ class MyBot(commands.Bot):
             "Commands.Orders.myorderscommand",
             "Commands.Orders.myordersview",
             "Commands.Admin.claim_sale_wizard",
-            "Commands.Admin.claim_sale_runtime",             
+            "Commands.Admin.claim_sale_runtime",
             "Commands.Admin.admincommands",
             "Commands.Admin.inventory_csv_import",
             "Commands.SellCards.sellcards",
@@ -71,8 +71,8 @@ class MyBot(commands.Bot):
             "Commands.MyRewards.my_rewards",
             "Commands.ReportBug.report_a_bug",
             "Commands.OwnerCommands.manage_bugs",
-            "Commands.Pokedex.pokedex"
-
+            "Commands.Pokedex.pokedex",
+            "Commands.Admin.subscribe"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
@@ -87,11 +87,32 @@ class MyBot(commands.Bot):
 
         print("=== END OF REPORT ===\n")
 
+        self.loop.create_task(daily_license_expiration_task(self))
         synced = await self.tree.sync()
         print(f"Synced {len(synced)} commands globally.")
 
 
 bot = MyBot(command_prefix="!", intents=intents)
+
+
+# ---------------------------------------------------------
+#   GLOBAL LICENSE CHECK
+# ---------------------------------------------------------
+from Utils.license_check import check_license
+
+# ---------------------------------------------------------
+#   PATCH THE REAL DISPATCHER (_call)
+# ---------------------------------------------------------
+original_call = bot.tree._call
+
+async def patched_call(interaction: discord.Interaction):
+    allowed = await check_license(interaction)
+    if not allowed:
+        return  # BLOCK COMMAND COMPLETELY
+
+    return await original_call(interaction)
+
+bot.tree._call = patched_call
 
 
 # ---------------------------------------------------------
@@ -119,8 +140,8 @@ async def on_app_command_error(interaction: discord.Interaction, error):
 
     try:
         await interaction.followup.send(
-        "⚠️ An internal error occurred while processing this command.",
-        ephemeral=True
+            "⚠️ An internal error occurred while processing this command.",
+            ephemeral=True
         )
     except Exception:
         logger.error("[ERROR HANDLER] Could not send error message (interaction invalid).")
@@ -139,10 +160,7 @@ async def on_interaction(interaction: discord.Interaction):
     async with bot.db.acquire() as conn:
         created = await bot.badgedb.ensure_user_exists(interaction.user, interaction.guild.id)
 
-        # Award First Partner badge ONLY if user is new AND does NOT already have it
         if created:
-
-            # Check if user already has the badge
             has_badge = await conn.fetchval("""
                 SELECT 1
                 FROM user_badges ub
@@ -155,21 +173,18 @@ async def on_interaction(interaction: discord.Interaction):
             if not has_badge:
                 await bot.badgedb.auto_award_first_partner(interaction.user.id)
 
-                # Fetch badge info
                 badge = await conn.fetchrow("""
                     SELECT name, emoji_name, emoji_id, description
                     FROM badges
                     WHERE LOWER(name) = 'first partner';
                 """)
 
-                # Build embed
                 embed = discord.Embed(
                     title="🎉 Badge Awarded!",
                     description=f"You’ve earned the **{badge['name']}** badge!",
                     color=discord.Color.gold()
                 )
 
-                # Render badge emoji exactly like your Items bot
                 badge_emoji = (
                     f"<:{badge['emoji_name']}:{badge['emoji_id']}>"
                     if badge["emoji_id"] else "⬜"
@@ -190,7 +205,6 @@ async def on_interaction(interaction: discord.Interaction):
                     inline=False
                 )
 
-                # Thumbnail uses the badge emoji image
                 embed.set_thumbnail(
                     url=f"https://cdn.discordapp.com/emojis/{badge['emoji_id']}.png?size=96&quality=lossless"
                 )
@@ -202,16 +216,14 @@ async def on_interaction(interaction: discord.Interaction):
 
 
 # ---------------------------------------------------------
-#   WELCOME MESSAGE (DB-DRIVEN WELCOME CHANNEL)
+#   WELCOME MESSAGE
 # ---------------------------------------------------------
 @bot.event
 async def on_member_join(member: discord.Member):
     print(f"[DEBUG] Member joined: {member} (ID: {member.id}) in guild {member.guild.name}")
 
-    # --- FIX ADDED HERE ---
     await bot.badgedb.ensure_user_exists(member, member.guild.id)
 
-    # Fetch welcome channel from DB
     async with bot.db.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT welcome_channel_id FROM guild_settings WHERE guild_id = $1",
@@ -219,14 +231,12 @@ async def on_member_join(member: discord.Member):
         )
 
     if not row or not row["welcome_channel_id"]:
-        print("[DEBUG] No welcome channel set for this guild.")
         return
 
     welcome_channel_id = row["welcome_channel_id"]
     channel = member.guild.get_channel(welcome_channel_id)
 
     if channel is None:
-        print(f"[DEBUG] Welcome channel ID {welcome_channel_id} not found in guild.")
         return
 
     await channel.send(
@@ -267,7 +277,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
     embed.add_field(name="📦 /myorders", value="View your past orders.", inline=False)
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
-    embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list. Get alerts for new singles that match your wish list!", inline=False)
+    embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list.", inline=False)
     embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
     embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
     embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
@@ -279,12 +289,11 @@ async def help_command(interaction: discord.Interaction):
 
     embed.add_field(
         name="**Troubleshooting:**",
-        value="If you receive this error ⚠️ **An internal error occurred while processing this command**, make sure you are **not running the command inside a direct message**. Run it again inside the Discord server.",
+        value="If you receive this error ⚠️ **An internal error occurred while processing this command**, make sure you are **not running the command inside a direct message**.",
         inline=False
     )
 
     await interaction.response.send_message(embed=embed, ephemeral=True)
-
 
 
 bot.run(TOKEN)
