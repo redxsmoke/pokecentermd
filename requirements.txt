@@ -4,4 +4,6 @@ psycopg2
 asyncpg
 python-dateutil>=2.8.2
 pytz
+stripe==10.0.0
+
 
