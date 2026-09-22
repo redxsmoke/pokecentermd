@@ -39,6 +39,9 @@ class SubscriptionButtons(discord.ui.View):
 
         db = await self.get_db()
 
+        # -------------------------
+        # FETCH VENDOR OR CREATE NEW
+        # -------------------------
         vendor = await db.fetchrow("""
             SELECT vendor_id, stripe_customer_id
             FROM vendors
@@ -74,8 +77,27 @@ class SubscriptionButtons(discord.ui.View):
                 WHERE vendor_id = $2
             """, stripe_customer_id, vendor_id)
 
-        price_id = "price_12345"
+        # -------------------------
+        # FETCH PRICE ID FROM DB
+        # -------------------------
+        price_row = await db.fetchrow("""
+            SELECT price_id
+            FROM stripe_pricing_keys
+            WHERE tier_name = $1
+        """, "premium")
 
+        if not price_row:
+            await db.close()
+            return await interaction.response.send_message(
+                "Pricing configuration error: No price found for tier 'premium'.",
+                ephemeral=True
+            )
+
+        price_id = price_row["price_id"]
+
+        # -------------------------
+        # CREATE STRIPE CHECKOUT SESSION
+        # -------------------------
         session = stripe.checkout.Session.create(
             mode="subscription",
             customer=stripe_customer_id,
@@ -164,7 +186,7 @@ class SubscriptionButtons(discord.ui.View):
 
 
 # ============================================================
-# COG (THIS WAS MISSING)
+# COG
 # ============================================================
 class AdminSubscription(commands.Cog):
     def __init__(self, bot):
@@ -180,7 +202,6 @@ class AdminSubscription(commands.Cog):
                 ephemeral=True
             )
 
-        # You will later fetch these from DB
         vendor_id = 1
         subscription_id = 1
         stripe_subscription_id = "sub_12345"
@@ -195,7 +216,7 @@ class AdminSubscription(commands.Cog):
 
 
 # ============================================================
-# SETUP FUNCTION (NOW CORRECT)
+# SETUP FUNCTION
 # ============================================================
 async def setup(bot):
     await bot.add_cog(AdminSubscription(bot))
