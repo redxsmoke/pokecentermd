@@ -253,6 +253,8 @@ class TriviaView(discord.ui.View):
         if self.no_winner_task is not None:
             self.no_winner_task.cancel()
             self.no_winner_task = None
+
+
 class TriviaButton(discord.ui.Button):
     def __init__(self, label: str, parent_view: TriviaView):
         super().__init__(label=label, style=discord.ButtonStyle.primary)
@@ -375,7 +377,6 @@ class PokeTriviaManager:
             )
 
         if not settings or not settings["poke_trivia_enabled"]:
-            print("[PokeTrivia] Trivia disabled for this guild.")
             return
 
         # Try configured channel first
@@ -401,57 +402,63 @@ class PokeTriviaManager:
             channel = self._get_any_text_channel()
 
         if channel is None:
-            print("[PokeTrivia] No suitable channel found to post trivia.")
             return
 
         # ============================================================
-        #   FETCH TRIVIA QUESTION
+        #   FETCH TRIVIA QUESTION (UPDATED LOGIC)
         # ============================================================
         async with self.pool.acquire() as conn:
+
+            # Count active questions
             total_active = await conn.fetchval(
                 "SELECT COUNT(*) FROM poke_trivia_question WHERE is_active = TRUE"
             )
 
+            # If none active → reset all to NULL
             if total_active == 0:
-                print("[PokeTrivia] No active trivia questions.")
-                return
+                await conn.execute(
+                    "UPDATE poke_trivia_question SET last_asked = NULL WHERE is_active = TRUE"
+                )
+                total_active = await conn.fetchval(
+                    "SELECT COUNT(*) FROM poke_trivia_question WHERE is_active = TRUE"
+                )
 
-            # First: never asked
+            # Try to pick a random question where last_asked IS NULL
             row = await conn.fetchrow(
                 """
                 SELECT *
                 FROM poke_trivia_question
                 WHERE is_active = TRUE
                   AND last_asked IS NULL
-                ORDER BY created_at ASC
+                ORDER BY RANDOM()
                 LIMIT 1
                 """
             )
 
+            # If none are NULL → reset all → pick random
             if row is None:
-                now_utc = datetime.now(TRIVIA_TIMEZONE)
-                cutoff = now_utc - timedelta(days=total_active)
+                await conn.execute(
+                    """
+                    UPDATE poke_trivia_question
+                    SET last_asked = NULL
+                    WHERE is_active = TRUE
+                    """
+                )
 
                 row = await conn.fetchrow(
                     """
                     SELECT *
                     FROM poke_trivia_question
                     WHERE is_active = TRUE
-                      AND last_asked <= $1
-                    ORDER BY last_asked ASC
+                    ORDER BY RANDOM()
                     LIMIT 1
-                    """,
-                    cutoff,
+                    """
                 )
 
             if row is None:
-                print("[PokeTrivia] No eligible trivia questions found.")
                 return
 
-            # Convert DB timestamp to aware if needed
-            if row["last_asked"] is not None and row["last_asked"].tzinfo is None:
-                row["last_asked"] = row["last_asked"].replace(tzinfo=TRIVIA_TIMEZONE)
-
+            # Update last_asked
             now_utc = datetime.now(TRIVIA_TIMEZONE)
             await conn.execute(
                 """
@@ -503,6 +510,8 @@ class PokeTriviaManager:
                 if channel.permissions_for(guild.me).send_messages:
                     return channel
         return None
+
+
 # ============================================================
 #   EXTENSION SETUP
 # ============================================================
@@ -515,4 +524,3 @@ async def setup(bot):
     # Start trivia manager
     trivia = PokeTriviaManager(bot, bot.db)
     trivia.start()
-
