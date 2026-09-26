@@ -212,7 +212,7 @@ class Inventory(commands.Cog):
             embed.add_field(name="Illustrator", value=row["illustrator"] or "—", inline=False)
 
             if row["image_link"]:
-                embed.set_image(url=row["image_link"])
+                embed.set_thumbnail(url=row["image_link"])
 
             current_embeds.append(embed)
             inventory_ids.append(row["inventory_id"])
