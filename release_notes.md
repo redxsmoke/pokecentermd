@@ -1,4 +1,4 @@
-send: false
+send: True
 
 Version: 1.5
 
@@ -19,9 +19,16 @@ What's New
 
 New Commands
 
-* /mylevel
-* /leaderboard
-* /shippinginfo
+* /reportabug
+* /pokedex
+* /shop sealed 
+* /shop singles
+
+
+
+Removed Commands
+
+* /shop (relabeled as /shop singles \& shop sealed)
 
 
 
@@ -29,9 +36,12 @@ New Commands
 
 How to Use
 
-* **Run /mylevel** — View your current level and EXP progress
-* **Run /leaderboard** — View level and number of pokemon caught leaderboards
-* **Run /shippinginfo** — Add a saved shipping address for faster checkout
+* **Run /reportabug** — Report a bug you find with the bot. If it's a confirmed bug, you'll earn the **Bug Catcher Badge!**
+* **Run /pokedex** — View the pokemon you've caught using the bot! Filter by region and sort by catches!
+* **Run /shop sealed** — View sealed inventory the vendor has to offer.
+* **Run /shop singles** — View sealed inventory the vendor has to offer.
+
+
 
 
 
@@ -39,7 +49,16 @@ How to Use
 
 Bug Fixes
 
-* **Fixed the bug preventing users from creating a wish list. /Mywishlist now allows users to add items to their wish list.**
+* **Fixed rewards system not displaying earned rewards**
+
+
+
+★★Added Features★★
+
+* New leaderboard for poke trivia points
+* New badges for poke 10, 25, and 50 trivia points
+* Masterball reward for 5 trivia points - use in /catchpokemon
+* Bug Catcher Badge
 
 
 
@@ -47,16 +66,11 @@ Bug Fixes
 
 ★★Upcoming Features★★
 
-* /pokedex command - View the Pokémon you've caught with the Pokémon catch game, sort and filter by region
-* New leaderboard for poke trivia points
-* Report a bug - Earn a bug catcher bag if you report an unknown issue with the bot
-* Additional badges and rewards
 * Additional mini games and consumer features
 
 
 
 * ADMIN FEATURES
-* Support for adding and filtering sealed products
 * Configurable percentages on inventory for claim sales
 * Batch Uploads via image (Discovery Stage, may not be possible)
 * OCR recognition

@@ -248,13 +248,15 @@ async def on_member_join(member: discord.Member):
     await channel.send(
         f"Welcome to the server {member.mention}!\n\n"
         "There are a few commands you can use to buy or sell your cards to us:\n\n"
-        "• **/shop** – browse the cards we have available for sale and add them to your cart\n"
+        "• **/shop sealed** – browse the sealed products we have available for sale and add them to your cart\n"
+        "• **/shop singles** – browse the cards we have available for sale and add them to your cart\n"
         "• **/cart** – submit and pay for your order\n"
         "• **/sellyourcards** – send us cards you'd like to offload\n"
         "• **/buyingguide** – view our current buying rates\n"
         "• **/myorders** – view your past orders\n"
         "• **/mywishlist** – Add, view, and remove items to your wish list. Get alerts for new singles that match your wish list!\n"
         "• **/catchpokemon** – Earn rewards by catching pokemon!\n"
+        "• **/pokedex** – View the pokemon you've caught using /catchpokemon!\n"
         "• **/daily** – Earn rewards by checking in daily\n"
         "• **/mybadges** – View your badges\n"
         "• **/userbadges** – View other server members badges\n"
@@ -262,6 +264,7 @@ async def on_member_join(member: discord.Member):
         "• **/mylevel** – View your current level and EXP progress!\n\n"
         "• **/leaderboard** – View level and number of pokemon caught leaderboard!\n\n"
         "• **/shippinginfo** – Add a saved shipping aderss for faster checkout!\n\n"
+        "• **/reportabug** – Report an issue with the bot to the developers!\n\n"
         "To get a refresher about what commands the bot offers, use **/help**!"
     )
 
@@ -277,7 +280,8 @@ async def help_command(interaction: discord.Interaction):
         color=discord.Color.blue()
     )
 
-    embed.add_field(name="🛒 /shop", value="Browse cards and add to cart.", inline=False)
+    embed.add_field(name="🛒📦 /shop sealed", value="Browse sealed collection and add to cart.", inline=False)
+    embed.add_field(name="🛒 /shop singles", value="Browse cards and add to cart.", inline=False)
     embed.add_field(name="💳 /cart", value="Submit and pay for your order.", inline=False)
     embed.add_field(name="📤 /sellyourcards", value="Send us cards you'd like to offload.", inline=False)
     embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
@@ -285,12 +289,14 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
     embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list.", inline=False)
     embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
+    embed.add_field(name="✅ /pokedex", value="View pokemon you've caught using /catchpokemon", inline=False)
     embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
     embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
     embed.add_field(name="👤 /userbadges", value="View other server members' badges", inline=False)
     embed.add_field(name="🎚️ /mylevel", value="View your current level and EXP progress", inline=False)
     embed.add_field(name="👑 /leaderboard", value="View level and number of pokemon caught leaderboard", inline=False)
     embed.add_field(name="✉️ /shippinginfo", value="Add a saved shipping aderss for faster checkout", inline=False)
+    embed.add_field(name="🐛 /reportabug", value="Report an issue with the bot to the developers!", inline=False)
     embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
 
     embed.add_field(
