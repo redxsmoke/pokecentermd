@@ -45,7 +45,9 @@ class RewardRequirementsModal(discord.ui.Modal, title="Reward Requirements"):
 
         if category == "level_locked":
             self.level = discord.ui.TextInput(label="Required level")
+            self.max_uses = discord.ui.TextInput(label="Max uses per user (optional)", required=False)
             self.add_item(self.level)
+            self.add_item(self.max_uses)
 
         elif category == "timed":
             self.days = discord.ui.TextInput(label="Expires after X days")
@@ -78,11 +80,12 @@ class RewardRequirementsModal(discord.ui.Modal, title="Reward Requirements"):
 
         if hasattr(self, "max_uses"):
             mu = self.max_uses.value.strip()
-            if not mu.isdigit() or int(mu) <= 0:
-                return await interaction.response.send_message(
-                    "❌ Max uses must be a positive number.",
-                    ephemeral=True
-                )
+            if mu:  # optional for level_locked
+                if not mu.isdigit() or int(mu) <= 0:
+                    return await interaction.response.send_message(
+                        "❌ Max uses must be a positive number.",
+                        ephemeral=True
+                    )
 
         # -------------------------
         # BUILD BASE DATA

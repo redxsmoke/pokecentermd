@@ -1,14 +1,14 @@
 send: false
 
-Version: 1.4
+Version: 1.5
 
 
 
 What's New
 
-* ***New Rewards system including Free Shipping, % off purchase and $ off purchase (e.g, 10% off| $10 off)***
-* ***New Pokémon Trivia Game (Free to play every Day at 4:00 PM - Answer correctly to win rewards!)***
-* ***CLAIM SALE Functionality has been added!*** 
+* ***Support for sealed products has been added. Vendors can now add sealed products to their inventory.***
+* ***New Poke Trivia Questions have been added with various difficulties***
+* ***CLAIM SALE Functionality has been added!***
 * ***NEW SHOP \& Wishlist filter - By popular demand, You can now filter cards by artist/illustrator! You can also add artist/illustrator to a wish list record to be notified when any card with your favorite artist is added.***
 * ***New saved shipping address for faster checkout!***
 * ***Admin - New Admin commands for claim sales.***
@@ -59,9 +59,5 @@ Bug Fixes
 * Support for adding and filtering sealed products
 * Configurable percentages on inventory for claim sales
 * Batch Uploads via image (Discovery Stage, may not be possible)
-* OCR recognition 
-
-
-
-
+* OCR recognition
 

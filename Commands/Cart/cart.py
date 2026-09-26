@@ -474,8 +474,7 @@ async def process_checkout(
     total_before_shipping = subtotal + tax
 
     # -----------------------------
-    # REWARD SYSTEM DISABLED HERE
-    # (Manual reward buttons will handle discounts)
+    # REWARD SYSTEM (MERGED SOURCE)
     # -----------------------------
     final_total = total_before_shipping
     discounted_shipping = shipping_cost
@@ -577,7 +576,7 @@ async def process_checkout(
     view.discounted_total = total
 
     # -----------------------------
-    # REWARD BUTTONS
+    # REWARD BUTTONS (MERGED SOURCE)
     # -----------------------------
     reward_view = RewardApplyView(
         bot,
@@ -609,9 +608,8 @@ async def process_checkout(
     await interaction.response.send_message(embed=embed, view=final_view, ephemeral=True)
 
 
-# =====================================================================
-# CHECKOUT START VIEW
-# =====================================================================
+
+
 # =====================================================================
 # CHECKOUT START VIEW
 # =====================================================================
@@ -835,10 +833,50 @@ class RewardApplyView(discord.ui.View):
 
     async def async_init(self, guild_id):
         user_level = await get_user_level(self.bot, self.user_id, guild_id)
-        rewards = await fetch_active_rewards(self.bot.db, guild_id)
+
+        async with self.bot.db.acquire() as conn:
+            # 1) USER-SPECIFIC REWARDS (user_rewards + guild_rewards)
+            user_rows = await conn.fetch(
+                """
+                SELECT
+                    gr.*,
+                    ur.times_used,
+                    ur.max_uses AS user_max_uses
+                FROM user_rewards ur
+                JOIN guild_rewards gr ON gr.reward_id = ur.reward_id
+                WHERE ur.user_id = $1
+                  AND ur.guild_id = $2
+                  AND gr.active = TRUE;
+                """,
+                self.user_id,
+                guild_id
+            )
+
+            # 2) GUILD-WIDE REWARDS (everyone can use)
+            guild_rows = await conn.fetch(
+                """
+                SELECT
+                    gr.*,
+                    NULL::INTEGER AS times_used,
+                    NULL::INTEGER AS user_max_uses
+                FROM guild_rewards gr
+                WHERE gr.guild_id = $1
+                  AND gr.active = TRUE;
+                """,
+                guild_id
+            )
+
+        # 3) MERGE BY reward_id (user row overrides guild row)
+        merged = {}
+        for r in guild_rows:
+            merged[r["reward_id"]] = dict(r)
+        for r in user_rows:
+            merged[r["reward_id"]] = dict(r)
 
         eligible = []
-        for r in rewards:
+
+        # 4) ELIGIBILITY CHECK
+        for r in merged.values():
             ok = await reward_is_eligible(
                 self.bot.db,
                 r,
@@ -847,40 +885,28 @@ class RewardApplyView(discord.ui.View):
                 user_level,
                 self.original_subtotal + self.original_tax
             )
-            if ok:
+            if not ok:
+                continue
 
-                if r["category"] == "limited_use":
-                    async with self.bot.db.acquire() as conn:
-                        row = await conn.fetchrow(
-                            """
-                            SELECT times_used
-                            FROM user_rewards
-                            WHERE user_id = $1 AND guild_id = $2 AND reward_id = $3
-                            """,
-                            self.user_id,
-                            guild_id,
-                            r["reward_id"]
-                        )
+            # LIMITED USE HANDLING
+            if r["category"] == "limited_use":
+                used = r.get("times_used") or 0
+                max_uses = r.get("user_max_uses") or r.get("max_uses")
+                if max_uses is not None:
+                    remaining = max_uses - used
+                    if remaining <= 0:
+                        continue
+                    r["remaining_uses"] = remaining
 
-                    used = row["times_used"] if row else 0
+            eligible.append(r)
 
-                    r = dict(r)
-                    r["remaining_uses"] = r["max_uses"] - used
-
-                else:
-                    r = dict(r)
-
-                eligible.append(r)
-
+        # 5) BUILD BUTTONS
         for reward in eligible:
             self.add_item(RewardButton(self.bot, reward, self))
 
         return len(eligible) > 0
 
     async def apply_selected_reward(self, interaction: discord.Interaction):
-        # ---------------------------------------------------------
-        # PREVENT REWARD STACKING
-        # ---------------------------------------------------------
         if self.applied_reward is not None:
             embed = discord.Embed(
                 title="Reward Already Applied",
@@ -899,40 +925,38 @@ class RewardApplyView(discord.ui.View):
 
         reward = dict(reward)
 
-        # ---------------------------------------------------------
-        # APPLY THE SELECTED REWARD
-        # ---------------------------------------------------------
+        # Use ORIGINAL values for reward math
+        original_order_total = self.original_subtotal + self.original_tax
+
         result = await apply_rewards(
             self.bot.db,
             interaction.guild_id,
             self.user_id,
             await get_user_level(self.bot, self.user_id, interaction.guild_id),
-            self.subtotal + self.tax,
-            self.shipping_cost,
-            self.subtotal,
+            original_order_total,          # order_total
+            self.original_shipping,        # shipping_cost
+            self.original_subtotal,        # subtotal
             reward
         )
 
-        # result["final_total"] is discounted SUBTOTAL
-        discounted_subtotal = result["final_total"]
-        discounted_tax = round(discounted_subtotal * 0.06, 2)
+        # FREE SHIPPING → only shipping changes
+        if reward["type"] == "free_shipping":
+            self.subtotal = self.original_subtotal
+            self.tax = self.original_tax
+            self.discounted_shipping = 0.00
 
-        # Update working values
-        self.subtotal = discounted_subtotal
-        self.tax = discounted_tax
-        self.discounted_shipping = result["final_shipping"]
+        # PERCENT / FLAT → subtotal changes, tax recalculated
+        else:
+            self.subtotal = result["final_total"]
+            self.tax = round(self.subtotal * 0.06, 2)
+            self.discounted_shipping = self.original_shipping
+
         self.applied_reward = reward
 
-        # ---------------------------------------------------------
-        # DISABLE ALL OTHER REWARD BUTTONS
-        # ---------------------------------------------------------
         for item in self.children:
             if isinstance(item, discord.ui.Button):
                 item.disabled = True
 
-        # ---------------------------------------------------------
-        # UPDATE FINALIZE VIEW
-        # ---------------------------------------------------------
         new_total_for_finalize = self.subtotal + self.tax + self.discounted_shipping
         self.finalize_view.applied_reward = reward
         self.finalize_view.discounted_total = new_total_for_finalize
