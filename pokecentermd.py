@@ -78,7 +78,8 @@ class MyBot(commands.Bot):
             "Commands.ReportBug.report_a_bug",
             "Commands.OwnerCommands.manage_bugs",
             "Commands.Pokedex.pokedex",
-            "Commands.Admin.subscribe"
+            "Commands.Admin.subscribe",
+            "Commands.UnownCipher.unowncipher"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")

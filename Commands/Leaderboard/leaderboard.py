@@ -5,6 +5,7 @@ from discord import app_commands
 POKEBALL_EMOJI = "<:Pokeball1:1540904892195930182>"
 POKETRIVIA_EMOJI = "<:PokeTrivia:1550328600170074163>"
 POKETRIVIA_IMAGE = "https://cdn.discordapp.com/attachments/1540905804293607435/1545631848284291092/card.jpg"
+UNOWN_EMOJI = "🔡"   
 
 
 class LeaderboardView(discord.ui.View):
@@ -48,6 +49,12 @@ class TabSelect(discord.ui.Select):
                 emoji=POKETRIVIA_EMOJI,
                 description="Ranked by correct trivia answers",
                 value="trivia"
+            ),
+            discord.SelectOption(
+                label="Unown Cipher Solvers",
+                emoji=UNOWN_EMOJI,
+                description="Ranked by ciphers solved",
+                value="cipher"
             ),
         ]
         super().__init__(placeholder="Select category…", min_values=1, max_values=1, options=options)
@@ -199,6 +206,45 @@ async def build_leaderboard_embed(bot, guild_id, scope, tab):
             embed.set_thumbnail(url=POKETRIVIA_IMAGE)
             return embed
 
+        # -------------------------
+        # UNOWN CIPHER LEADERBOARD
+        # -------------------------
+        if tab == "cipher":
+            if scope == "guild":
+                rows = await conn.fetch("""
+                    SELECT user_id, ciphers_solved
+                    FROM unown_cipher_leaders
+                    WHERE guild_id = $1
+                    ORDER BY ciphers_solved DESC
+                    LIMIT 10
+                """, guild_id)
+            else:
+                rows = await conn.fetch("""
+                    SELECT user_id, SUM(ciphers_solved) AS total
+                    FROM unown_cipher_leaders
+                    GROUP BY user_id
+                    ORDER BY total DESC
+                    LIMIT 10
+                """)
+
+            lines = []
+            rank = 1
+            for r in rows:
+                user = bot.get_user(r["user_id"])
+                name = user.name if user else f"User {r['user_id']}"
+
+                total = r["ciphers_solved"] if scope == "guild" else r["total"]
+
+                lines.append(f"{rank}. {name} | {UNOWN_EMOJI} {total:,} solved")
+                rank += 1
+
+            desc = "\n".join(lines) if lines else "No cipher solves yet."
+            title = f"{UNOWN_EMOJI} Unown Cipher Solvers"
+            title += " — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"
+
+            embed = discord.Embed(title=title, description=desc, color=discord.Color.orange())
+            return embed
+
 
 class Leaderboard(commands.Cog):
     def __init__(self, bot):
@@ -206,7 +252,7 @@ class Leaderboard(commands.Cog):
 
     @app_commands.command(
         name="leaderboard",
-        description="View the level, Pokémon caught, and trivia leaderboards."
+        description="View the level, Pokémon caught, trivia, and cipher leaderboards."
     )
     async def leaderboard(self, interaction: discord.Interaction):
         embed = await build_leaderboard_embed(
