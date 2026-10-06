@@ -120,7 +120,7 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                 description=(
                     f"You solved the cipher!\n\n"
                     f"The Pokémon was **{self.correct_name}**.\n\n"
-                    f"**XP Earned:** `{xp_earned}`"
+                    f"**EXP Earned:** `{xp_earned}`"
                 ),
                 color=discord.Color.green()
             )
