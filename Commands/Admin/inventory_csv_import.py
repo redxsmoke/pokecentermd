@@ -11,10 +11,7 @@ from Commands.BotSettings.admin_channel_helpers import (
     get_singles_channel
 )
 
-
-
 VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-
 
 def decode_csv_bytes(data: bytes) -> str:
     for enc in ("utf-8", "utf-8-sig", "utf-16", "utf-16-le", "utf-16-be", "latin-1"):
@@ -23,7 +20,6 @@ def decode_csv_bytes(data: bytes) -> str:
         except Exception:
             pass
     raise UnicodeDecodeError("Unable to decode CSV file with common encodings.")
-
 
 class InventoryCSVImport(commands.Cog):
     def __init__(self, bot):
@@ -73,11 +69,8 @@ class InventoryCSVImport(commands.Cog):
 
         invalid_image_found = False
         valid_image_found = False
-
-        # ⭐ NEW — track if any new cards were inserted
         new_cards_inserted = False
 
-        # ⭐ Condition mapping (strict)
         condition_map = {
             "nm": "Near Mint",
             "near mint": "Near Mint",
@@ -105,14 +98,12 @@ class InventoryCSVImport(commands.Cog):
                 rarity = (row.get("Rarity") or "").strip()
                 illustrator = (row.get("Illustrator") or "").strip()
 
-
                 note1 = (row.get("Note 1") or "").strip()
                 note2 = (row.get("Note 2") or "").strip()
                 note3 = (row.get("Note 3") or "").strip()
                 note4 = (row.get("Note 4") or "").strip()
                 note5 = (row.get("Note 5") or "").strip()
 
-                # ⭐ CSV Price column (always used unless Note2 overrides)
                 csv_price_raw = (row.get("Price") or "").strip()
                 csv_price = None
                 if csv_price_raw:
@@ -138,14 +129,12 @@ class InventoryCSVImport(commands.Cog):
                     await msg.reply(embed=embed, mention_author=False)
                     return
 
-                # ⭐ Quantity
                 qty_raw = (row.get("Quantity") or "").strip()
                 try:
                     quantity_available = int(qty_raw)
                 except:
                     quantity_available = 0
 
-                # ⭐ Price override from Note2
                 parsed_note2_price = None
                 if note2:
                     cleaned = note2.replace("$", "").replace(",", "").strip()
@@ -160,7 +149,10 @@ class InventoryCSVImport(commands.Cog):
                 else:
                     final_price = csv_price
 
-                # ⭐ Condition from Note1 (strict validation, null defaults to NM)
+                # ⭐ Minimum price rule — force $1.00 floor
+                if final_price is not None and final_price < 1.00:
+                    final_price = 1.00
+
                 if note1:
                     normalized = note1.lower().strip()
                     if normalized not in condition_map:
@@ -179,7 +171,6 @@ class InventoryCSVImport(commands.Cog):
                 else:
                     condition = "Near Mint"
 
-                # ⭐ Image validation
                 raw_image = (row.get("ImageURL") or "").strip()
                 if raw_image:
                     lower = raw_image.lower()
@@ -192,7 +183,6 @@ class InventoryCSVImport(commands.Cog):
                 else:
                     image_link = None
 
-                # ⭐ Find existing CSV-created row (manual_add ignored)
                 existing = await conn.fetchrow(
                     """
                     SELECT *
@@ -208,11 +198,9 @@ class InventoryCSVImport(commands.Cog):
                     guild_id, pokemon_name, card_number, set_name, series, variant, condition
                 )
 
-                # ⭐ Skip manual_add rows entirely
                 if existing and existing["csv_id"] == "manual_add":
                     continue
 
-                # ⭐ UPDATE CSV-created rows
                 if existing:
 
                     old_price = existing["price"]
@@ -241,7 +229,6 @@ class InventoryCSVImport(commands.Cog):
                         guild_id
                     )
 
-                    # ⭐ Wishlist notifications unchanged
                     if (
                         final_price is not None
                         and old_price is not None
@@ -275,9 +262,9 @@ class InventoryCSVImport(commands.Cog):
 
                             if f["set_name"] and f["set_name"] != set_name:
                                 match = False
+
                             if f.get("illustrator") and f["illustrator"].lower() not in illustrator.lower():
                                 match = False
-
 
                             if not match:
                                 continue
@@ -303,7 +290,7 @@ class InventoryCSVImport(commands.Cog):
                                 print(f"Failed to DM user {f['user_id']}: {e}")
 
                 else:
-                    # ⭐ INSERT new CSV row (manual rows do NOT block inserts)
+
                     await conn.execute(
                         """
                         INSERT INTO inventory (
@@ -345,9 +332,9 @@ class InventoryCSVImport(commands.Cog):
                         note4,
                         note5
                     )
- 
+
                     new_cards_inserted = True
- 
+
                     filters = await conn.fetch(
                         "SELECT * FROM user_wishlist WHERE guild_id = $1",
                         guild_id
@@ -377,7 +364,6 @@ class InventoryCSVImport(commands.Cog):
                         if f.get("illustrator") and f["illustrator"].lower() not in illustrator.lower():
                             match = False
 
-
                         if not match:
                             continue
 
@@ -401,9 +387,6 @@ class InventoryCSVImport(commands.Cog):
                         except Exception as e:
                             print(f"Failed to DM user {f['user_id']}: {e}")
 
- 
-
-            # Build CSV key set
             csv_keys = set()
             for row in rows:
                 name = (row.get("Name") or "").strip().lower()
@@ -422,14 +405,12 @@ class InventoryCSVImport(commands.Cog):
 
                 csv_keys.add((name, card_number, set_name, series, variant, condition))
 
-            # Fetch DB rows for this CSV
             db_rows = await conn.fetch("""
                 SELECT inventory_id, pokemon_name, card_number, set_name, series, variant, condition
                 FROM inventory
                 WHERE guild_id = $1 AND csv_id = $2
             """, guild_id, csv_id)
 
-            # Zero out missing rows
             for r in db_rows:
                 key = (
                     r["pokemon_name"].lower(),
@@ -459,7 +440,6 @@ class InventoryCSVImport(commands.Cog):
             )
             await msg.reply(embed=warn_embed, mention_author=False)
 
-        # ⭐ NEW — singles notification only if new cards were inserted
         if new_cards_inserted:
             singles_channel = await get_singles_channel(self.bot, guild_id)
             singles_role = await get_singles_role(self.bot, guild_id)
@@ -521,7 +501,6 @@ class InventoryCSVImport(commands.Cog):
             color=discord.Color.green()
         )
         await msg.reply(embed=success_embed, mention_author=False)
-
 
 async def setup(bot):
     await bot.add_cog(InventoryCSVImport(bot))
