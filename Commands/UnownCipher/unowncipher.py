@@ -195,7 +195,7 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
 # ---------------------------------------------------------
 class CipherView(discord.ui.View):
     def __init__(self, correct_name: str, pokemon_image: str, interaction):
-        super().__init__(timeout=120)
+        super().__init__(timeout=900)
         self.correct_name = correct_name
         self.pokemon_image = pokemon_image
         self.interaction = interaction
