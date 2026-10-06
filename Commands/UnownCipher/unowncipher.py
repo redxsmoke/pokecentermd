@@ -2,8 +2,6 @@ import discord
 from discord import app_commands
 from LevelManager.level_up_manager import LevelUpManager
 
-
-
 # ---------------------------------------------------------
 # SYMBOL MAP & HELPERS
 # ---------------------------------------------------------
@@ -40,6 +38,21 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         self.interaction = interaction  # needed for DB access
 
     async def on_submit(self, interaction: discord.Interaction):
+
+        # ---------------------------------------------------------
+        # USER RESTRICTION FIX — ONLY PUZZLE OWNER CAN SUBMIT
+        # ---------------------------------------------------------
+        if interaction.user.id != self.view_ref.allowed_user_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ Not Allowed",
+                    description="This puzzle belongs to another user. Start your own puzzle by typing /unowncipher",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
         user_answer = normalize_name(self.answer.value)
         correct = normalize_name(self.correct_name)
 
@@ -48,15 +61,9 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         # ---------------------------------------------------------
         if user_answer == correct:
 
-            # ---------------------------------------------------------
-            # XP CALCULATION
-            # ---------------------------------------------------------
             letters_only = ''.join(ch for ch in self.correct_name if ch.isalpha())
             xp_earned = 25 * len(letters_only)
 
-            # ---------------------------------------------------------
-            # UPDATE USERS TABLE (user_id)
-            # ---------------------------------------------------------
             async with interaction.client.db.acquire() as conn:
                 current_exp = await conn.fetchval(
                     """
@@ -84,9 +91,6 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                     interaction.guild.id
                 )
 
-                # ---------------------------------------------------------
-                # UPDATE LEADERBOARD TABLE
-                # ---------------------------------------------------------
                 await conn.execute(
                     """
                     INSERT INTO unown_cipher_leaders (user_id, guild_id, ciphers_solved)
@@ -100,10 +104,6 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                     interaction.guild.id
                 )
 
-            # ---------------------------------------------------------
-            # LEVEL UP CHECK
-            # ---------------------------------------------------------
-            from LevelManager.level_up_manager import LevelUpManager
             level_manager = LevelUpManager(interaction.client, interaction.client.db)
 
             await level_manager.check_level_up(
@@ -112,9 +112,6 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                 channel=interaction.channel
             )
 
-            # ---------------------------------------------------------
-            # SUCCESS EMBED (THUMBNAIL FIXED)
-            # ---------------------------------------------------------
             embed = discord.Embed(
                 title="🎉 Correct!",
                 description=(
@@ -125,20 +122,14 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                 color=discord.Color.green()
             )
 
-            # Thumbnail ALWAYS shows now because we send a NEW message
             if self.pokemon_image:
                 embed.set_thumbnail(url=self.pokemon_image)
 
-            # Disable button on original puzzle message
             for child in self.view_ref.children:
                 child.disabled = True
 
-            # ---------------------------------------------------------
-            # FIX: Send a NEW message so Discord loads the thumbnail
-            # ---------------------------------------------------------
             await interaction.response.send_message(embed=embed)
 
-            # Update original puzzle message to disable button
             try:
                 await interaction.message.edit(view=self.view_ref)
             except:
@@ -151,9 +142,6 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         # ---------------------------------------------------------
         self.view_ref.attempts += 1
 
-        # ---------------------------------------------------------
-        # THIRD FAILED ATTEMPT → GAME OVER
-        # ---------------------------------------------------------
         if self.view_ref.attempts >= 3:
             for child in self.view_ref.children:
                 child.disabled = True
@@ -176,9 +164,6 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
 
             return
 
-        # ---------------------------------------------------------
-        # ATTEMPTS 1 AND 2 → EPHEMERAL INCORRECT MESSAGE
-        # ---------------------------------------------------------
         embed = discord.Embed(
             title="❌ Incorrect",
             description=(
@@ -189,6 +174,7 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         )
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 # ---------------------------------------------------------
 # VIEW WITH SUBMIT BUTTON
@@ -201,8 +187,28 @@ class CipherView(discord.ui.View):
         self.interaction = interaction
         self.attempts = 0
 
+        # ---------------------------------------------------------
+        # USER RESTRICTION FIX — STORE OWNER ID
+        # ---------------------------------------------------------
+        self.allowed_user_id = interaction.user.id
+
     @discord.ui.button(label="Submit Answer", style=discord.ButtonStyle.primary)
     async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # ---------------------------------------------------------
+        # USER RESTRICTION FIX — ONLY PUZZLE OWNER CAN CLICK
+        # ---------------------------------------------------------
+        if interaction.user.id != self.allowed_user_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ Not Allowed",
+                    description="This puzzle belongs to another user. Start your own puzzle by typing /unowncipher",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
         await interaction.response.send_modal(
             CipherAnswerModal(self.correct_name, self.pokemon_image, self, self.interaction)
         )
