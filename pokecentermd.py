@@ -9,25 +9,15 @@ from dotenv import load_dotenv
 from Commands.BotSettings.admin_channel_helpers import get_singles_role
 from Utils.daily_license_expiration import daily_license_expiration_task
 
-
-
-
-
 # DB imports
 from db.connection import init_db, get_pool
 
 # BADGE SYSTEM IMPORT
 from Users.upsertuser import BadgeDB
 
-# -------------------------
-#   SHOP STATE VARIABLES
-# -------------------------
 SHOP_OPEN = True
 SHOP_CLOSE_REASON = None
 
-# -------------------------
-#   LOGGING SETUP
-# -------------------------
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("bot")
 
@@ -45,7 +35,6 @@ class MyBot(commands.Bot):
         await init_db()
         self.db = get_pool()
 
-        # Initialize badge system
         self.badgedb = BadgeDB(self.db)
 
         extensions = [
@@ -79,7 +68,8 @@ class MyBot(commands.Bot):
             "Commands.OwnerCommands.manage_bugs",
             "Commands.Pokedex.pokedex",
             "Commands.Admin.subscribe",
-            "Commands.UnownCipher.unowncipher"
+            "Commands.UnownCipher.unowncipher",
+            "Commands.Admin.set_member_role"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
@@ -94,6 +84,9 @@ class MyBot(commands.Bot):
 
         print("=== END OF REPORT ===\n")
 
+        # REGISTER PERSISTENT VIEW
+        self.add_view(RulesAgreeView(None, None))
+
         self.loop.create_task(daily_license_expiration_task(self))
         synced = await self.tree.sync()
         print(f"Synced {len(synced)} commands globally.")
@@ -101,30 +94,19 @@ class MyBot(commands.Bot):
 
 bot = MyBot(command_prefix="!", intents=intents)
 
-
-# ---------------------------------------------------------
-#   GLOBAL LICENSE CHECK
-# ---------------------------------------------------------
 from Utils.license_check import check_license
 
-# ---------------------------------------------------------
-#   PATCH THE REAL DISPATCHER (_call)
-# ---------------------------------------------------------
 original_call = bot.tree._call
 
 async def patched_call(interaction: discord.Interaction):
     allowed = await check_license(interaction)
     if not allowed:
-        return  # BLOCK COMMAND COMPLETELY
-
+        return
     return await original_call(interaction)
 
 bot.tree._call = patched_call
 
 
-# ---------------------------------------------------------
-#   GLOBAL APP COMMAND ERROR LOGGER (SAFE)
-# ---------------------------------------------------------
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error):
     logger.error(
@@ -134,11 +116,14 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         exc_info=True
     )
 
+    embed = discord.Embed(
+        title="⚠️ Internal Error",
+        description="An internal error occurred while processing this command.",
+        color=discord.Color.red()
+    )
+
     try:
-        await interaction.response.send_message(
-            "⚠️ An internal error occurred while processing this command.",
-            ephemeral=True
-        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
         return
     except discord.InteractionResponded:
         pass
@@ -146,24 +131,17 @@ async def on_app_command_error(interaction: discord.Interaction, error):
         pass
 
     try:
-        await interaction.followup.send(
-            "⚠️ An internal error occurred while processing this command.",
-            ephemeral=True
-        )
+        await interaction.followup.send(embed=embed, ephemeral=True)
     except Exception:
         logger.error("[ERROR HANDLER] Could not send error message (interaction invalid).")
 
 
-# ---------------------------------------------------------
-#   SAFE INTERACTION LOGGER + BADGE SYSTEM HOOK
-# ---------------------------------------------------------
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
     logger.debug(
         f"[INTERACTION] type={interaction.type} id={interaction.id} data={interaction.data}"
     )
 
-    # --- Badge System User Tracking ---
     async with bot.db.acquire() as conn:
         created = await bot.badgedb.ensure_user_exists(interaction.user, interaction.guild.id)
 
@@ -192,11 +170,6 @@ async def on_interaction(interaction: discord.Interaction):
                     color=discord.Color.gold()
                 )
 
-                badge_emoji = (
-                    f"<:{badge['emoji_name']}:{badge['emoji_id']}>"
-                    if badge["emoji_id"] else "⬜"
-                )
-
                 embed.add_field(
                     name="Badge Description:",
                     value=badge["description"],
@@ -223,7 +196,86 @@ async def on_interaction(interaction: discord.Interaction):
 
 
 # ---------------------------------------------------------
-#   WELCOME MESSAGE
+#   PERSISTENT RULES AGREEMENT BUTTON
+# ---------------------------------------------------------
+class RulesAgreeView(discord.ui.View):
+    def __init__(self, member_role, allowed_user_id):
+        super().__init__(timeout=None)
+        self.member_role = member_role
+        self.allowed_user_id = allowed_user_id
+
+    @discord.ui.button(
+        label="Agree",
+        style=discord.ButtonStyle.green,
+        custom_id="rules_agree_button"
+    )
+    async def agree_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+
+        # Only the joining user can click
+        if self.allowed_user_id is not None and interaction.user.id != self.allowed_user_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ Not Allowed",
+                    description="This button is not for you.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
+        # Role missing
+        if self.member_role is None:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ No Member Role",
+                    description="No Member role is configured. Please contact an admin.",
+                    color=discord.Color.red()
+                ),
+                ephemeral=True
+            )
+            return
+
+        await interaction.user.add_roles(self.member_role)
+
+        # SEND COMMAND LIST HERE (embed)
+        embed = discord.Embed(
+            title="✅ Rules Accepted",
+            description=(
+                f"You have agreed to the rules and have been granted the **{self.member_role.name}** role!"
+            ),
+            color=discord.Color.green()
+        )
+
+        embed.add_field(
+            name="📘 Commands You Can Use",
+            value=(
+                "**/shop sealed** – browse sealed products\n"
+                "**/shop singles** – browse singles\n"
+                "**/cart** – submit and pay for your order\n"
+                "**/sellyourcards** – offload cards\n"
+                "**/buyingguide** – view buying rates\n"
+                "**/myorders** – view past orders\n"
+                "**/mywishlist** – manage your wishlist\n"
+                "**/catchpokemon** – catch Pokémon for rewards\n"
+                "**/unowncipher** – play the unown cipher game\n"
+                "**/pokedex** – view caught Pokémon\n"
+                "**/daily** – daily check‑in rewards\n"
+                "**/mybadges** – view your badges\n"
+                "**/userbadges** – view others’ badges\n"
+                "**/mylevel** – view your level\n"
+                "**/leaderboard** – server leaderboard\n"
+                "**/shippinginfo** – save shipping address\n"
+                "**/reportabug** – report issues\n"
+                "**/help** – view all commands\n"
+            ),
+            inline=False
+        )
+
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+
+# ---------------------------------------------------------
+#   WELCOME MESSAGE (RULES ONLY)
 # ---------------------------------------------------------
 @bot.event
 async def on_member_join(member: discord.Member):
@@ -233,7 +285,7 @@ async def on_member_join(member: discord.Member):
 
     async with bot.db.acquire() as conn:
         row = await conn.fetchrow(
-            "SELECT welcome_channel_id FROM guild_settings WHERE guild_id = $1",
+            "SELECT welcome_channel_id, member_role_id FROM guild_settings WHERE guild_id = $1",
             member.guild.id
         )
 
@@ -241,33 +293,64 @@ async def on_member_join(member: discord.Member):
         return
 
     welcome_channel_id = row["welcome_channel_id"]
-    channel = member.guild.get_channel(welcome_channel_id)
+    configured_role_id = row["member_role_id"]
 
+    channel = member.guild.get_channel(welcome_channel_id)
     if channel is None:
         return
 
-    await channel.send(
-        f"Welcome to the server {member.mention}!\n\n"
-        "There are a few commands you can use to buy or sell your cards to us:\n\n"
-        "• **/shop sealed** – browse the sealed products we have available for sale and add them to your cart\n"
-        "• **/shop singles** – browse the cards we have available for sale and add them to your cart\n"
-        "• **/cart** – submit and pay for your order\n"
-        "• **/sellyourcards** – send us cards you'd like to offload\n"
-        "• **/buyingguide** – view our current buying rates\n"
-        "• **/myorders** – view your past orders\n"
-        "• **/mywishlist** – Add, view, and remove items to your wish list. Get alerts for new singles that match your wish list!\n"
-        "• **/catchpokemon** – Earn rewards by catching pokemon!\n"
-        "• **/pokedex** – View the pokemon you've caught using /catchpokemon!\n"
-        "• **/daily** – Earn rewards by checking in daily\n"
-        "• **/mybadges** – View your badges\n"
-        "• **/userbadges** – View other server members badges\n"
-        "• **/upcomingshows** – see what shows we are attending soon!\n\n"
-        "• **/mylevel** – View your current level and EXP progress!\n\n"
-        "• **/leaderboard** – View level and number of pokemon caught leaderboard!\n\n"
-        "• **/shippinginfo** – Add a saved shipping aderss for faster checkout!\n\n"
-        "• **/reportabug** – Report an issue with the bot to the developers!\n\n"
-        "To get a refresher about what commands the bot offers, use **/help**!"
+    # 1. Try configured role
+    member_role = None
+    if configured_role_id:
+        member_role = member.guild.get_role(configured_role_id)
+
+        # If not found, refresh role cache
+        if member_role is None:
+            print(f"[WARN] Role {configured_role_id} not found in cache. Refreshing...")
+            await member.guild.fetch_roles()
+            member_role = member.guild.get_role(configured_role_id)
+
+        # Check bot permissions
+        if member_role is not None:
+            bot_member = member.guild.get_member(bot.user.id)
+            if member_role.position >= bot_member.top_role.position:
+                print("[ERROR] Bot cannot assign Member role due to role hierarchy.")
+                member_role = None
+
+    # 2. Fallback to role named "Member"
+    if member_role is None:
+        member_role = discord.utils.get(member.guild.roles, name="Member")
+
+    # 3. If still missing → notify admins
+    if member_role is None:
+        await channel.send(
+            embed=discord.Embed(
+                title="⚠️ Admin Action Required",
+                description=(
+                    "This server does not have a configured Member role.\n"
+                    "Please run **/setmemberrole** to enable onboarding."
+                ),
+                color=discord.Color.red()
+            )
+        )
+
+    # RULES ONLY EMBED
+    embed = discord.Embed(
+        title=f"👋 Welcome {member.display_name}!",
+        description=(
+            "**Before you can access the server, please review the rules below:**\n\n"
+            "📌 **Server Rules**\n"
+            "• Be respectful to all members\n"
+            "• No harassment, politics, or hate speech\n"
+            "• No spamming or advertising\n"
+            "• Users who abuse the system may be banned at the admin's discretion\n"
+            "• Follow Discord’s Terms of Service\n\n"
+            "Click **Agree** below to accept the rules and receive access. Failure to follow these rules will result in a ban"
+        ),
+        color=discord.Color.blurple()
     )
+
+    await channel.send(embed=embed, view=RulesAgreeView(member_role, member.id))
 
 
 # ---------------------------------------------------------
@@ -290,6 +373,7 @@ async def help_command(interaction: discord.Interaction):
     embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
     embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list.", inline=False)
     embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
+    embed.add_field(name="🔡 /unowncipher", value="Play the unown cipher game!", inline=False)
     embed.add_field(name="✅ /pokedex", value="View pokemon you've caught using /catchpokemon", inline=False)
     embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
     embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
