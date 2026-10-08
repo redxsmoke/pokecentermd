@@ -69,7 +69,9 @@ class MyBot(commands.Bot):
             "Commands.Pokedex.pokedex",
             "Commands.Admin.subscribe",
             "Commands.UnownCipher.unowncipher",
-            "Commands.Admin.set_member_role"
+            "Commands.Admin.set_member_role",
+            "Commands.Wallet.wallet",
+            "Commands.Dexdecoder.dexdecoder"
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")
