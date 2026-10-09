@@ -85,7 +85,30 @@ class DexDecoderAnswerModal(discord.ui.Modal, title="DexDecoder Answer"):
         guess = normalize_name(self.answer.value)
         correct = normalize_name(self.puzzle_view.pokemon_name)
 
+        # -------------------------------------------------
+        # INCORRECT ANSWER
+        # -------------------------------------------------
+
         if guess != correct:
+
+            async with interaction.client.db.acquire() as conn:
+
+                await conn.execute(
+                    """
+                    INSERT INTO dexdecoder (
+                        user_id,
+                        guild_id,
+                        times_won,
+                        times_lost
+                    )
+                    VALUES ($1, $2, 0, 1)
+                    ON CONFLICT (user_id, guild_id)
+                    DO UPDATE SET
+                        times_lost = dexdecoder.times_lost + 1;
+                    """,
+                    interaction.user.id,
+                    interaction.guild.id
+                )
 
             self.puzzle_view.completed = True
 
@@ -195,6 +218,23 @@ class DexDecoderAnswerModal(discord.ui.Modal, title="DexDecoder Answer"):
                 interaction.guild.id
             )
 
+            await conn.execute(
+                """
+                INSERT INTO dexdecoder (
+                    user_id,
+                    guild_id,
+                    times_won,
+                    times_lost
+                )
+                VALUES ($1, $2, 1, 0)
+                ON CONFLICT (user_id, guild_id)
+                DO UPDATE SET
+                    times_won = dexdecoder.times_won + 1;
+                """,
+                interaction.user.id,
+                interaction.guild.id
+            )
+
         level_manager = LevelUpManager(
             interaction.client,
             interaction.client.db
@@ -245,8 +285,6 @@ class DexDecoderAnswerModal(discord.ui.Modal, title="DexDecoder Answer"):
             )
         except:
             pass
-
-
 # ---------------------------------------------------------
 # PUZZLE VIEW
 # ---------------------------------------------------------
