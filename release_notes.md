@@ -1,28 +1,25 @@
-send: False
+send: True
 
-Version: 1.5
+Version: 1.6
 
 
 
 What's New
 
-* ***Support for sealed products has been added. Vendors can now add sealed products to their inventory.***
-* ***New Poke Trivia Questions have been added with various difficulties***
+* ***New Games including Unown Cipher, DexDecoder, and PokeSlots!***
+* ***Coins are now given in games***
+* ***Enhanced daily rewards system that rewards more EXP, coins, and now gives streak bonuses***
+
+
 
 
 
 New Commands
 
-* /reportabug
-* /pokedex
-* /shop sealed
-* /shop singles
-
-
-
-Removed Commands
-
-* /shop (relabeled as /shop singles \& shop sealed)
+* /unowncipher
+* /dexdecoder
+* /slots
+* /wallet
 
 
 
@@ -30,10 +27,10 @@ Removed Commands
 
 How to Use
 
-* **Run /reportabug** — Report a bug you find with the bot. If it's a confirmed bug, you'll earn the **Bug Catcher Badge!**
-* **Run /pokedex** — View the pokemon you've caught using the bot! Filter by region and sort by catches!
-* **Run /shop sealed** — View sealed inventory the vendor has to offer.
-* **Run /shop singles** — View sealed inventory the vendor has to offer.
+* **Run /unowncipher** — Play the Unown Cipher game. Winners receive EXP and coins!
+* **Run /dexdecoder** — Play the dexdecoder game. Winners receive EXP and coins!
+* **Run /slots** — Place your bets of 1,000, 10,000, or 100,000. Can you hit the jackpot?
+* **Run /wallet**— View your total amount of coins!
 
 
 
@@ -43,16 +40,15 @@ How to Use
 
 Bug Fixes
 
-* **Fixed rewards system not displaying earned rewards**
+* **Minor bug fixes \& improvements.**
 
 
 
 ★★Added Features★★
 
-* New leaderboard for poke trivia points
-* New badges for poke 10, 25, and 50 trivia points
-* Masterball reward for 5 trivia points - use in /catchpokemon
-* Bug Catcher Badge
+* New leaderboard for Unown Ciphers \& DexDecoder games
+
+
 
 
 
@@ -60,7 +56,8 @@ Bug Fixes
 
 ★★Upcoming Features★★
 
-* Additional mini games and consumer features
+* Market system to buy items such as pokeballs and other in game items
+* Additional games and tasks to earn coins
 
 
 

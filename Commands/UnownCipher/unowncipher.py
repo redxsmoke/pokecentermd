@@ -1,3 +1,5 @@
+import random
+
 import discord
 from discord import app_commands
 from LevelManager.level_up_manager import LevelUpManager
@@ -12,9 +14,11 @@ SYMBOL_MAP = {
     'V': '◥', 'W': '⌑', 'X': '⌖', 'Y': '⌘', 'Z': '¤'
 }
 
+
 def encode_pokemon_name(name: str) -> str:
     cleaned = ''.join(ch for ch in name.upper() if ch.isalpha())
     return ''.join(SYMBOL_MAP[ch] for ch in cleaned)
+
 
 def normalize_name(name: str) -> str:
     return ''.join(ch for ch in name.lower() if ch.isalpha())
@@ -35,13 +39,10 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         self.correct_name = correct_name
         self.pokemon_image = pokemon_image
         self.view_ref = view_ref
-        self.interaction = interaction  # needed for DB access
+        self.interaction = interaction
 
     async def on_submit(self, interaction: discord.Interaction):
 
-        # ---------------------------------------------------------
-        # USER RESTRICTION FIX — ONLY PUZZLE OWNER CAN SUBMIT
-        # ---------------------------------------------------------
         if interaction.user.id != self.view_ref.allowed_user_id:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -61,32 +62,55 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
         # ---------------------------------------------------------
         if user_answer == correct:
 
-            letters_only = ''.join(ch for ch in self.correct_name if ch.isalpha())
+            letters_only = ''.join(
+                ch for ch in self.correct_name if ch.isalpha()
+            )
+
             xp_earned = 25 * len(letters_only)
 
             async with interaction.client.db.acquire() as conn:
-                current_exp = await conn.fetchval(
+
+                user_data = await conn.fetchrow(
                     """
-                    SELECT exp
+                    SELECT exp, daily_streak
                     FROM users
-                    WHERE user_id = $1 AND guild_id = $2
+                    WHERE user_id = $1
+                      AND guild_id = $2
                     """,
                     interaction.user.id,
                     interaction.guild.id
                 )
 
-                if current_exp is None:
-                    current_exp = 0
+                current_exp = user_data["exp"] or 0
+                streak = max(user_data["daily_streak"] or 1, 1)
 
                 new_exp = current_exp + xp_earned
+
+                # Same coin formula as /daily
+                coin_base = int(
+                    1000 * (1 + ((streak - 1) * 0.25))
+                )
+
+                coin_multiplier = round(
+                    random.uniform(1.1, 4.3),
+                    2
+                )
+
+                coin_reward = int(
+                    coin_base * coin_multiplier
+                )
 
                 await conn.execute(
                     """
                     UPDATE users
-                    SET exp = $1
-                    WHERE user_id = $2 AND guild_id = $3
+                    SET
+                        exp = $1,
+                        coin_balance = coin_balance + $2
+                    WHERE user_id = $3
+                      AND guild_id = $4
                     """,
                     new_exp,
+                    coin_reward,
                     interaction.user.id,
                     interaction.guild.id
                 )
@@ -104,7 +128,10 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                     interaction.guild.id
                 )
 
-            level_manager = LevelUpManager(interaction.client, interaction.client.db)
+            level_manager = LevelUpManager(
+                interaction.client,
+                interaction.client.db
+            )
 
             await level_manager.check_level_up(
                 user_id=interaction.user.id,
@@ -117,10 +144,12 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                 description=(
                     f"You solved the cipher!\n\n"
                     f"The Pokémon was **{self.correct_name}**.\n\n"
-                    f"**EXP Earned:** `{xp_earned}`"
+                    f"**EXP Earned:** `{xp_earned}`\n"
+                    f"**Coins Earned:** `🪙 {coin_reward:,}`"
                 ),
                 color=discord.Color.green()
             )
+
 
             if self.pokemon_image:
                 embed.set_thumbnail(url=self.pokemon_image)
@@ -155,7 +184,10 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
                 color=discord.Color.red()
             )
 
-            await interaction.response.send_message(embed=embed, ephemeral=False)
+            await interaction.response.send_message(
+                embed=embed,
+                ephemeral=False
+            )
 
             try:
                 await interaction.message.edit(view=self.view_ref)
@@ -173,7 +205,10 @@ class CipherAnswerModal(discord.ui.Modal, title="Unown Cipher Answer"):
             color=discord.Color.orange()
         )
 
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
 
 
 # ---------------------------------------------------------
@@ -187,17 +222,18 @@ class CipherView(discord.ui.View):
         self.interaction = interaction
         self.attempts = 0
 
-        # ---------------------------------------------------------
-        # USER RESTRICTION FIX — STORE OWNER ID
-        # ---------------------------------------------------------
         self.allowed_user_id = interaction.user.id
 
-    @discord.ui.button(label="Submit Answer", style=discord.ButtonStyle.primary)
-    async def submit(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="Submit Answer",
+        style=discord.ButtonStyle.primary
+    )
+    async def submit(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
 
-        # ---------------------------------------------------------
-        # USER RESTRICTION FIX — ONLY PUZZLE OWNER CAN CLICK
-        # ---------------------------------------------------------
         if interaction.user.id != self.allowed_user_id:
             await interaction.response.send_message(
                 embed=discord.Embed(
@@ -210,7 +246,12 @@ class CipherView(discord.ui.View):
             return
 
         await interaction.response.send_modal(
-            CipherAnswerModal(self.correct_name, self.pokemon_image, self, self.interaction)
+            CipherAnswerModal(
+                self.correct_name,
+                self.pokemon_image,
+                self,
+                self.interaction
+            )
         )
 
 
@@ -239,7 +280,11 @@ async def unowncipher(interaction: discord.Interaction):
             description="No Pokémon found in cd_pokemon.",
             color=discord.Color.red()
         )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        await interaction.response.send_message(
+            embed=embed,
+            ephemeral=True
+        )
         return
 
     pokemon_name = row["pokemon_name"]
@@ -264,7 +309,11 @@ async def unowncipher(interaction: discord.Interaction):
         url="https://cdn.discordapp.com/attachments/1540905804293607435/1556861555990073455/card.jpg"
     )
 
-    view = CipherView(correct_name=pokemon_name, pokemon_image=pokemon_image, interaction=interaction)
+    view = CipherView(
+        correct_name=pokemon_name,
+        pokemon_image=pokemon_image,
+        interaction=interaction
+    )
 
     await interaction.response.send_message(
         embed=embed,
