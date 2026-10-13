@@ -30,20 +30,20 @@ ROCKETLOGO = discord.PartialEmoji(
 )
 
 COIN_PRIZES = [
+    1,
+    10,
+    100,
     1_000,
     2_500,
     5_000,
     10_000,
-    15_000,
     25_000,
-    35_000,
     50_000,
     75_000,
     100_000,
-    150_000,
     250_000,
-    350_000,
     500_000,
+    750_000,
 ]
 
 # Opens 13 cases, leaving two cases for the finale.
@@ -839,6 +839,11 @@ class DealView(discord.ui.View):
         await self.clear_side_messages()
 
         amount = int(self.state["current_offer"])
+        held_case = self.state["selected_case"]
+        held_prize = self.state["prizes"][
+            int(self.state["case_prizes"][str(held_case)])
+        ]
+        held_prize_text = prize_label(held_prize)
         self.state["phase"] = "completed"
 
         async with self.bot.db.acquire() as conn:
@@ -879,7 +884,9 @@ class DealView(discord.ui.View):
             (
                 f"{GIOVANNI} **You accepted Giovanni's offer "
                 f"of {amount:,} coins!**\n\n"
-                "The winnings have been added to your balance."
+                "The winnings have been added to your balance.\n\n"
+                f"Your case (**#{held_case}**) contained "
+                f"**{held_prize_text}**!"
             ),
             color=discord.Color.green(),
         )
