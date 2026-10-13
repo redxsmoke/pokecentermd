@@ -7,6 +7,7 @@ POKETRIVIA_EMOJI = "<:PokeTrivia:1550328600170074163>"
 POKETRIVIA_IMAGE = "https://cdn.discordapp.com/attachments/1540905804293607435/1545631848284291092/card.jpg"
 UNOWN_EMOJI = "🔡"   
 DEXDECODER_EMOJI = "🧩"
+DEAL_OR_NO_DEAL_EMOJI = "<:giovanni:1559392555731394641>"
 
 
 class LeaderboardView(discord.ui.View):
@@ -63,6 +64,12 @@ class TabSelect(discord.ui.Select):
                description="Ranked by puzzles solved",
                value="dexdecoder"
            ),
+            discord.SelectOption(
+                label="Giovanni's Deal or No Deal",
+                emoji=DEAL_OR_NO_DEAL_EMOJI,
+                description="Ranked by total winnings",
+                value="dealornodeal"
+            ),
         ]
         super().__init__(placeholder="Select category…", min_values=1, max_values=1, options=options)
         self.view_ref = view
@@ -366,13 +373,69 @@ async def build_leaderboard_embed(bot, guild_id, scope, tab):
             return embed
 
 
+        # -------------------------
+        # DEAL OR NO DEAL LEADERBOARD
+        # -------------------------
+        if tab == "dealornodeal":
+            if scope == "guild":
+                rows = await conn.fetch("""
+                    SELECT user_id,
+                           COUNT(*) AS games_played,
+                           MAX(prize) AS largest_prize,
+                           SUM(prize) AS total_winnings
+                    FROM deal_or_no_deal_results
+                    WHERE guild_id = $1
+                    GROUP BY user_id
+                    ORDER BY total_winnings DESC,
+                             largest_prize DESC,
+                             games_played DESC
+                    LIMIT 10
+                """, guild_id)
+            else:
+                rows = await conn.fetch("""
+                    SELECT user_id,
+                           COUNT(*) AS games_played,
+                           MAX(prize) AS largest_prize,
+                           SUM(prize) AS total_winnings
+                    FROM deal_or_no_deal_results
+                    GROUP BY user_id
+                    ORDER BY total_winnings DESC,
+                             largest_prize DESC,
+                             games_played DESC
+                    LIMIT 10
+                """)
+
+            lines = []
+            for rank, r in enumerate(rows, start=1):
+                user = bot.get_user(r["user_id"])
+                name = user.name if user else f"<@{r['user_id']}>"
+                lines.append(
+                    f"**{rank}. {name}**\n"
+                    f"🎮 Games Played: **{r['games_played']:,}** | "
+                    f"🏆 Largest Prize: **{r['largest_prize']:,}**\n"
+                    f"🪙 Total Winnings: **{r['total_winnings']:,} coins**"
+                )
+
+            desc = "\n\n".join(lines) if lines else "No completed Deal or No Deal games yet."
+            title = f"{DEAL_OR_NO_DEAL_EMOJI} Deal or No Deal Leaderboard"
+            title += " — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"
+
+            embed = discord.Embed(
+                title=title,
+                description=desc,
+                color=discord.Color.gold()
+            )
+            embed.set_footer(text="Ranked by total winnings from completed games.")
+            return embed
+
+
 class Leaderboard(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
     @app_commands.command(
         name="leaderboard",
-        description="View the level, Pokémon caught, trivia, Unown Cipher, and DexDecoder leaderboards."
+        description="View game, Pokémon, and progression leaderboards."
     )
     async def leaderboard(self, interaction: discord.Interaction):
         embed = await build_leaderboard_embed(
