@@ -74,7 +74,9 @@ class MyBot(commands.Bot):
             "Commands.Dexdecoder.dexdecoder",
             "Commands.Slots.slots",
             "Commands.DealorNoDeal.dealornodeal",
-            "Commands.PokeMart.pokemart"
+            "Commands.PokeMart.pokemart",	
+            "Commands.VoltorbSweeper.voltorb_sweeper"
+
         ]
 
         print("\n=== EXTENSION LOAD REPORT ===")

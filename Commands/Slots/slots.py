@@ -78,6 +78,8 @@ slot_locks = set()
 # Active boosts are intentionally in memory, keyed by (user_id, guild_id).
 # They expire after 10 minutes and reset when the bot restarts.
 active_charm_boosts = {}
+# Lightweight per-player session stats; no database changes.
+slot_sessions = {}
 
 
 # ---------------------------------------------------------
@@ -133,24 +135,23 @@ def evaluate_board(board):
             jackpot_hit = True
 
             winning_lines.append(
-                f"Line {line_number}: Mew x3 JACKPOT"
+                f"{MEW_EMOJI} MEW JACKPOT • Line {line_number}"
             )
 
         elif symbol == EEVEE_EMOJI:
 
-            total_multiplier += 20
+            total_multiplier += 12
 
             winning_lines.append(
-                f"Line {line_number}: Eevee x3 (20x)"
+                f"{EEVEE_EMOJI} EEVEE • 12× • Line {line_number}"
             )
 
         else:
 
-            total_multiplier += 5
+            total_multiplier += 3
 
             winning_lines.append(
-                f"Line {line_number}: "
-                f"{symbol}{symbol}{symbol} (5x)"
+                f"{symbol} TRIPLE MATCH • 3× • Line {line_number}"
             )
 
     return (
@@ -266,17 +267,23 @@ async def load_lobby_embed(interaction):
             WHERE u.user_id=$1 AND u.guild_id=$2 AND i.item_name=$3
         """, interaction.user.id, interaction.guild.id, CHARM_NAME)
     description = (
-        f"🏦 Balance: **{balance:,}** Coins\n\n"
-        f"🟢 Beginner Jackpot: **{jackpots[1000]:,}**\n"
-        f"🔵 Trainer Jackpot: **{jackpots[10000]:,}**\n"
-        f"🟣 Champion Jackpot: **{jackpots[100000]:,}**\n\n"
-        "Select your wager below."
+        f"**CHOOSE YOUR MACHINE**\n"
+        f"🟢 **1,000**   ·   💎 {jackpots[1000]:,}\n"
+        f"🔵 **10,000**   ·   💎 {jackpots[10000]:,}\n"
+        f"🟣 **100,000**   ·   💎 {jackpots[100000]:,}\n\n"
+        f"🪙 Wallet  **{balance:,} coins**\n"
+        f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"**PAYTABLE**  ·  Five winning lines\n"
+        f"{MEW_EMOJI} ×3  **Progressive jackpot**\n"
+        f"{EEVEE_EMOJI} ×3  **12× bet**\n"
+        f"{PIKACHU_EMOJI} {CHARMANDER_EMOJI} {SQUIRTLE_EMOJI} {BULBASAUR_EMOJI} ×3  **3× bet**\n\n"
+        f"*Match three on a row or diagonal. Multiple lines pay together.*"
     )
     expires_at = active_charm_boosts.get((interaction.user.id, interaction.guild.id))
     if expires_at and expires_at > datetime.now(timezone.utc):
         description += f"\n\n{MEOWTH_CHARM_EMOJI} **Meowth's Charm is active.**"
     elif owned and owned['quantity'] > 0:
-        description += f"\n\n🎟️ **Meowth's Charm x{owned['quantity']}** — select **Use Meowth’s Charm** to activate."
+        description += f"\n\n{MEOWTH_CHARM_EMOJI} **{owned['quantity']} Charm(s) ready** · Optional +25% win chance for 10m"
     return discord.Embed(title='🎰 PokéSlots', description=description, color=discord.Color.gold())
 
 
@@ -406,7 +413,14 @@ class AfterSpinView(OwnedSlotsView):
         if (interaction.user.id, interaction.guild.id) in slot_locks:
             await send_private_error(interaction, '⏳ Spin In Progress', 'Wait for the current spin to finish.')
             return
-        embed = discord.Embed(title='🎰 PokéSlots', description='Thanks for playing!', color=discord.Color.gold())
+        stats = slot_sessions.pop((interaction.user.id, interaction.guild.id), None)
+        summary = 'Thanks for playing!'
+        if stats:
+            summary = (f"**SESSION COMPLETE**\n\n🎰 Spins: **{stats['spins']}**  ·  "
+                       f"🏆 Wins: **{stats['wins']}**\n"
+                       f"🪙 Session net: **{stats['net']:+,} coins**\n\nThanks for playing!")
+        embed = discord.Embed(title='🎰 PokéSlots · Game Over', description=summary, color=discord.Color.gold())
+
         await interaction.response.edit_message(embed=embed, view=None)
         self.stop()
 
@@ -467,7 +481,6 @@ async def run_slot_spin(interaction: discord.Interaction, bet: int):
 
                 charm_expires = active_charm_boosts.get(user_key)
                 charm_active = bool(charm_expires and charm_expires > datetime.now(timezone.utc))
-                newly_activated = False
                 await conn.execute("""
                     INSERT INTO slot_jackpot(guild_id,tier,current_amount)
                     VALUES($1,$2,$3) ON CONFLICT (guild_id,tier) DO NOTHING
@@ -494,19 +507,21 @@ async def run_slot_spin(interaction: discord.Interaction, bet: int):
 
         charm_text = ''
         if charm_active:
-            charm_text = f"\n🎟️ Meowth's Charm **+25% win chance** (<t:{int(charm_expires.timestamp())}:R>)"
+            charm_text = f"\n{MEOWTH_CHARM_EMOJI} **LUCKY MODE** · Ends <t:{int(charm_expires.timestamp())}:R>"
+        machine_header = (f"💎 **JACKPOT {starting_jackpot:,}** coins  ·  "
+                          f"🪙 Bet **{bet:,}**{charm_text}")
         embed = discord.Embed(
-            title=f"🎰 {SLOT_TIERS[bet]['name']} Slots",
-            description=f'💎 Current Jackpot: **{starting_jackpot:,}** Coins{charm_text}\n\n{hidden_board()}\n\n🎰 Spinning...',
+            title=f"🎰 POKÉSLOTS  ·  {SLOT_TIERS[bet]['name']}",
+            description=f"{machine_header}\n\n{hidden_board()}\n\n🎲 **Reels spinning...**",
             color=discord.Color.gold()
         )
         await interaction.response.edit_message(embed=embed, view=None)
         message = interaction.message
         await asyncio.sleep(0.8)
-        embed.description = f'💎 Current Jackpot: **{starting_jackpot:,}** Coins{charm_text}\n\n{reveal_row_1(board)}\n\n🎰 Spinning...'
+        embed.description = f'{machine_header}\n\n{reveal_row_1(board)}\n\n🎲 **Reels spinning...**'
         await message.edit(embed=embed)
         await asyncio.sleep(0.8)
-        embed.description = f'💎 Current Jackpot: **{starting_jackpot:,}** Coins{charm_text}\n\n{reveal_row_2(board)}\n\n🎰 Spinning...'
+        embed.description = f'{machine_header}\n\n{reveal_row_2(board)}\n\n🎲 **One reel left...**'
         await message.edit(embed=embed)
         await asyncio.sleep(0.8)
 
@@ -551,25 +566,45 @@ async def run_slot_spin(interaction: discord.Interaction, bet: int):
             except discord.HTTPException:
                 pass
 
+        # Compact result: the reels, the outcome, and the next decision.
+        net = payout - bet
+        if jackpot_hit:
+            outcome = f"🚨 **MEW JACKPOT! +{payout:,} COINS!**"
+            color = discord.Color.green()
+        elif payout > bet:
+            outcome = f"✨ **BIG WIN! +{payout:,} COINS**"
+            color = discord.Color.green()
+        elif payout:
+            outcome = f"⭐ **WIN! +{payout:,} COINS**"
+            color = discord.Color.blurple()
+        else:
+            outcome = "🎲 **No match this spin. Try your luck again!**"
+            color = discord.Color.gold()
+
+        stats = slot_sessions.setdefault(user_key, {'spins': 0, 'wins': 0, 'net': 0})
+        stats['spins'] += 1
+        stats['wins'] += int(payout > 0)
+        stats['net'] += net
+
         embed = discord.Embed(
-            title=f"🎰 {SLOT_TIERS[bet]['name']} Slots",
-            description=f'💎 Current Jackpot: **{starting_jackpot:,}** Coins{charm_text}\n\n{format_board(board)}',
-            color=discord.Color.green() if jackpot_hit else (
-                discord.Color.blurple() if payout > bet else discord.Color.gold()
-            )
+            title=f"🎰 POKÉSLOTS  ·  {SLOT_TIERS[bet]['name']}",
+            description=(
+                f"{machine_header}\n\n"
+                f"{format_board(board)}\n\n"
+                f"{outcome}\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"🪙 **Bet:** {bet:,}  ·  💰 **Paid:** {payout:,}\n"
+                f"📈 **Net:** {net:+,}  ·  🏦 **Wallet:** {new_balance:,}\n"
+                f"💎 **Next jackpot:** {current_jackpot:,}"
+            ),
+            color=color
         )
         if winning_lines:
-            embed.add_field(name='🏆 Winning Lines', value='\n'.join(f'• {line}' for line in winning_lines), inline=False)
-        else:
-            embed.add_field(name='❌ No Wins', value='Better luck next time!', inline=False)
-        if jackpot_hit:
-            embed.add_field(name='🚨 JACKPOT HIT 🚨', value=f'You won **{jackpot_amount:,}** coins!', inline=False)
-        embed.add_field(name='🪙 Bet', value=f'{bet:,}', inline=True)
-        embed.add_field(name='💰 Payout', value=f'{payout:,}', inline=True)
-        embed.add_field(name='📈 Net Winnings', value=f'{payout-bet:,}', inline=True)
-        embed.add_field(name='💵 Balance', value=f'{new_balance:,}', inline=True)
-        embed.add_field(name=f'{MEW_EMOJI} New Jackpot Amount', value=f'{current_jackpot:,}', inline=True)
-        embed.set_footer(text=f'{SLOT_TIERS[bet]["name"]} Slot Machine')
+            embed.add_field(name='🏆 Winning lines', value='\n'.join(winning_lines), inline=False)
+        embed.set_footer(text=(
+            f"Session: {stats['spins']} spins · {stats['wins']} wins · "
+            f"{stats['net']:+,} coins net  |  Spin again or change bet below"
+        ))
         await message.edit(embed=embed, view=await make_after_spin_view(interaction, bet))
     finally:
         slot_locks.discard(user_key)
@@ -577,6 +612,7 @@ async def run_slot_spin(interaction: discord.Interaction, bet: int):
 
 @app_commands.command(name='slots', description='Play PokéSlots.')
 async def slots(interaction: discord.Interaction):
+    slot_sessions[(interaction.user.id, interaction.guild.id)] = {'spins': 0, 'wins': 0, 'net': 0}
     embed = await load_lobby_embed(interaction)
     await interaction.response.send_message(embed=embed, view=await make_slots_view(interaction))
 

@@ -59,7 +59,7 @@ class Daily(commands.Cog):
                 minutes = int((remaining % 3600) // 60)
 
                 embed = discord.Embed(
-                    title="<:Pokeball1:1540418809939099818> Daily Already Claimed",
+                    title="<:Pokeball1:1540904892195930182> Daily Already Claimed",
                     description=f"Come back in **{hours}h {minutes}m**",
                     color=discord.Color.red()
                 )
