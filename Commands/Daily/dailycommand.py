@@ -160,7 +160,7 @@ class Daily(commands.Cog):
 
         embed.add_field(
             name="Poké Balls",
-            value=f"<:Pokeball1:1540418809939099818> {DAILY_POKEBALL_REWARD}",
+            value=f"<:Pokeball1:1540904892195930182> {DAILY_POKEBALL_REWARD}",
             inline=True
         )
 
