@@ -490,7 +490,7 @@ class InventoryCSVImport(commands.Cog):
                     content=ping_text,
                     embed=discord.Embed(
                         title="📢 New Singles Available!",
-                        description="New singles have just been added.\n\nUse the **/recentlyadded** command to view them.",
+                        description="New singles have just been added.\n\nUse the **/shop singles** command to view them.",
                         color=discord.Color.blue()
                     )
                 )

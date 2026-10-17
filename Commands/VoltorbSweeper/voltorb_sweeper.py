@@ -2,7 +2,7 @@
 
 Load as an extension with bot.load_extension('Commands.VoltorbSweeper.voltorbsweeper')
 or adjust the import path to match your folder structure.
-Requires existing users(user_id, guild_id, coin_balance). No new tables.
+Requires existing users(user_id, guild_id, coin_balance) and the voltorbsweeper stats table.
 """
 import asyncio
 import random
@@ -21,6 +21,23 @@ VOLTORB_TEXT = "<:Voltorb:1560468806567202906>"
 PRIZES = (0, 500, 1_200, 2_500, 4_500, 7_000, 11_000,
           16_000, 23_000, 32_000, 44_000, 60_000, MAX_PRIZE)
 ACTIVE_GAMES = {}  # (guild_id, user_id) -> VoltorbView; clears on restart
+
+
+async def record_result(conn, user_id, guild_id, won):
+    """Record exactly one completed game per call, using the caller's transaction."""
+    await conn.execute("""
+        INSERT INTO voltorbsweeper
+            (user_id, guild_id, times_won, times_lost, win_rate, last_played)
+        VALUES ($1, $2, $3, $4, CASE WHEN $3 = 1 THEN 100.00 ELSE 0.00 END, NOW())
+        ON CONFLICT (user_id, guild_id) DO UPDATE SET
+            times_won = voltorbsweeper.times_won + EXCLUDED.times_won,
+            times_lost = voltorbsweeper.times_lost + EXCLUDED.times_lost,
+            win_rate = ROUND(
+                (voltorbsweeper.times_won + EXCLUDED.times_won)::NUMERIC * 100 /
+                NULLIF(voltorbsweeper.times_won + EXCLUDED.times_won +
+                       voltorbsweeper.times_lost + EXCLUDED.times_lost, 0), 2),
+            last_played = NOW()
+    """, user_id, guild_id, int(won), int(not won))
 
 
 def fmt(amount):
@@ -108,6 +125,7 @@ class VoltorbView(discord.ui.View):
         self.finished = False
         self.processing = False
         self.message = None
+        self.bot = None
         self.tile_buttons = []
         for i in range(BOARD_SIZE * BOARD_SIZE):
             button = TileButton(i)
@@ -166,7 +184,7 @@ class VoltorbView(discord.ui.View):
             status = ('Pick a tile, or **Cash Out** to collect your winnings.'
                       if self.safe_count else 'Pick a tile. Avoid the Voltorbs!')
         e = discord.Embed(
-            title='⚡ VoltorbSweeper',
+            title=f'{VOLTORB_TEXT} VoltorbSweeper',
             description=(f'{status}\n\n'
                          f'💰 **Cash out: {fmt(self.prize)} coins**\n'
                          f'✅ Safe tiles: **{self.safe_count}/12** · 🚩 Marked: **{len(self.flagged)}/4**'
@@ -223,6 +241,8 @@ class VoltorbView(discord.ui.View):
             if self.board[button.index] == 0:
                 # Show the explosion first, then restore the classic button-grid
                 # reveal with Play Again in its own bottom row.
+                async with interaction.client.db.acquire() as conn:
+                    await record_result(conn, self.owner_id, self.guild_id, False)
                 self.finished = True
                 self.end()
                 explosion = discord.Embed(
@@ -284,6 +304,7 @@ class VoltorbView(discord.ui.View):
                     ''', self.prize, self.owner_id, self.guild_id)
                     if updated is None:
                         raise RuntimeError('Coin account not found while paying VoltorbSweeper.')
+                    await record_result(conn, self.owner_id, self.guild_id, True)
             title = '🏆 PERFECT CLEAR!' if cleared else '💰 DEAL! YOU CASHED OUT!'
             message = ('You revealed every safe tile and won the grand prize!'
                        if cleared else 'You walked away before hitting a Voltorb. Smart move!')
@@ -318,6 +339,8 @@ class VoltorbView(discord.ui.View):
             return
         self.processing = True
         try:
+            async with interaction.client.db.acquire() as conn:
+                await record_result(conn, self.owner_id, self.guild_id, False)
             await self.finish(interaction, self.result_embed(
                 '🚪 GAME OVER', 'You left the game without cashing out.',
                 color=discord.Color.red()))
@@ -332,6 +355,8 @@ class VoltorbView(discord.ui.View):
     async def on_timeout(self):
         if self.finished:
             return
+        async with self.bot.db.acquire() as conn:
+            await record_result(conn, self.owner_id, self.guild_id, False)
         self.finished = True
         self.end()
         if self.message:
@@ -378,7 +403,7 @@ START_LOCKS = set()
 def buyin_embed(balance):
     can_afford = balance >= ENTRY_FEE
     e = discord.Embed(
-        title='⚡ VoltorbSweeper · Confirm Entry',
+        title=f'{VOLTORB_TEXT} VoltorbSweeper · Confirm Entry',
         description=(
             'Reveal safe tiles to increase your prize. **Cash Out** before finding a '
             f'{VOLTORB_TEXT} Voltorb, or lose your entry fee.\n\n'
@@ -481,6 +506,7 @@ async def start_game(interaction: discord.Interaction, *, replace_message=False)
         board = [0] * VOLTORB_COUNT + [random.choice((1, 1, 1, 2, 2, 3)) for _ in range(12)]
         random.shuffle(board)
         view = VoltorbView(interaction.user.id, interaction.guild_id, board)
+        view.bot = interaction.client
         ACTIVE_GAMES[key] = view
         if replace_message:
             await interaction.response.edit_message(embed=view.embed(), view=view)

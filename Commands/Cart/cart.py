@@ -625,6 +625,7 @@ class CheckoutStartView(discord.ui.View):
         # SHIPPING SELECT
         self.shipping_select = discord.ui.Select(
             placeholder="Select Shipping Method",
+            row=0,
             options=[
                 discord.SelectOption(label="PWE ($1.50)", value="pwe"),
                 discord.SelectOption(label="Tracked ($4.95)", value="tracked")
@@ -664,6 +665,7 @@ class CheckoutStartView(discord.ui.View):
 
         self.payment_select = discord.ui.Select(
             placeholder="Select Payment Method",
+            row=1,
             options=payment_options
         )
         self.payment_select.callback = self.payment_callback
@@ -679,11 +681,8 @@ class CheckoutStartView(discord.ui.View):
         self.payment_method = self.payment_select.values[0]
         await interaction.response.defer()
 
-    # =====================================================================
-    # CONTINUE → MANUAL ADDRESS ENTRY (CheckoutModal)
-    # =====================================================================
-    @discord.ui.button(label="Continue", style=discord.ButtonStyle.success)
-    async def continue_btn(self, interaction, button):
+    @discord.ui.button(label="Continue to Address", style=discord.ButtonStyle.success, row=2)
+    async def continue_btn(self, interaction: discord.Interaction, button):
         if not self.shipping_method or not self.payment_method:
             embed = discord.Embed(
                 title="Missing Selection",
@@ -693,21 +692,40 @@ class CheckoutStartView(discord.ui.View):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
+        address_view = CheckoutAddressView(self)
+        embed = discord.Embed(
+            title="Checkout — Step 2",
+            description=(
+                f"**Shipping:** {'PWE ($1.50)' if self.shipping_method == 'pwe' else 'Tracked ($4.95)'}\n"
+                f"**Payment:** {self.payment_method.capitalize()}\n\n"
+                "Choose how you'd like to provide your shipping address."
+            ),
+            color=discord.Color.green()
+        )
+        await interaction.response.edit_message(embed=embed, view=address_view)
+
+
+class CheckoutAddressView(discord.ui.View):
+    """Second checkout screen, shown only after shipping and payment are chosen."""
+    def __init__(self, selection_view: CheckoutStartView):
+        super().__init__(timeout=180)
+        self.selection_view = selection_view
+        self.bot = selection_view.bot
+        self.user_id = selection_view.user_id
+
+    @discord.ui.button(label="Enter Shipping Address", style=discord.ButtonStyle.success)
+    async def enter_address_btn(self, interaction: discord.Interaction, button):
         modal = CheckoutModal(
             self.bot,
             self.user_id,
-            self.shipping_method,
-            self.payment_method
+            self.selection_view.shipping_method,
+            self.selection_view.payment_method
         )
         await interaction.response.send_modal(modal)
 
-    # =====================================================================
-    # USE SAVED ADDRESS BUTTON (RESTORED)
-    # =====================================================================
     @discord.ui.button(label="Use Saved Shipping Address", style=discord.ButtonStyle.primary)
     async def use_saved_btn(self, interaction: discord.Interaction, button):
-        guild_id = interaction.guild_id or interaction.user.guild.id
-
+        guild_id = interaction.guild_id
         async with self.bot.db.acquire() as conn:
             saved = await conn.fetchrow(
                 """
@@ -728,19 +746,27 @@ class CheckoutStartView(discord.ui.View):
             await interaction.response.send_message(embed=embed, ephemeral=True)
             return
 
-        # Call checkout using saved address
         await process_checkout(
             self.bot,
             interaction,
             self.user_id,
-            self.shipping_method,
-            self.payment_method,
+            self.selection_view.shipping_method,
+            self.selection_view.payment_method,
             saved["full_name"],
             saved["street_address"],
             saved["city"],
             saved["state"],
             saved["zip"]
         )
+
+    @discord.ui.button(label="Back", style=discord.ButtonStyle.secondary)
+    async def back_btn(self, interaction: discord.Interaction, button):
+        embed = discord.Embed(
+            title="Checkout — Step 1",
+            description="Select your shipping and payment method to continue.",
+            color=discord.Color.green()
+        )
+        await interaction.response.edit_message(embed=embed, view=self.selection_view)
 
 
 # =====================================================================

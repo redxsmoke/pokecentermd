@@ -28,7 +28,7 @@ class Daily(commands.Cog):
         description="Claim your daily Poké Ball reward"
     )
     async def daily(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         user_id = interaction.user.id
         guild_id = interaction.guild.id
@@ -66,7 +66,7 @@ class Daily(commands.Cog):
 
                 await interaction.followup.send(
                     embed=embed,
-                    ephemeral=True
+                    ephemeral=False
                 )
                 return
 
@@ -200,7 +200,7 @@ class Daily(commands.Cog):
 
         await interaction.followup.send(
             embed=embed,
-            ephemeral=True
+            ephemeral=False
         )
 
 

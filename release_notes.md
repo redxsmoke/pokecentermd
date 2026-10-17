@@ -1,14 +1,22 @@
-send: False
+send: True
 
-Version: 1.6
+Version: 1.7
 
 
 
 What's New
 
-* ***New Games including Unown Cipher, DexDecoder, and PokeSlots!***
-* ***Coins are now given in games***
-* ***Enhanced daily rewards system that rewards more EXP, coins, and now gives streak bonuses***
+* ***New Games including Giovanni's Deal or No Deal and Voltorb Sweeper***
+* ***Resigned shop command with improved performance, sorting options, and skip to page functionality.***
+* ***Updated checkout system that simplifies and enhances the checkout process.***
+* ***Redesigned slots game that provides a cleaner user interface***
+* ***Items - Spend your hard earned coins on items in the /pokemart.*** 
+
+  * ***Items Added*** 
+
+    * ***Berries - Feed berries to wild Pokemon and increase your odds of catching them.***
+    * ***Meowth's Charm - Meowth's Charm provides a 25% increased chance of winning in the /slots game for 10 minutes.*** 
+    * ***More items coming soon!***
 
 
 
@@ -16,25 +24,21 @@ What's New
 
 New Commands
 
-* /unowncipher
-* /dexdecoder
-* /slots
-* /wallet
+* /dealornodeal
+* /voltorbsweeper
 
 
+
+Removed Commands
+
+* /recentlyadded - The recently added command has been merged with the shop. Recently added cards can now be viewed as a sorting option when running /shop singles
 
 
 
 How to Use
 
-* **Run /unowncipher** — Play the Unown Cipher game. Winners receive EXP and coins!
-* **Run /dexdecoder** — Play the dexdecoder game. Winners receive EXP and coins!
-* **Run /slots** — Place your bets of 1,000, 10,000, or 100,000. Can you hit the jackpot?
-* **Run /wallet**— View your total amount of coins!
-
-
-
-
+* **Run /dealornodeal** — Play Giovanni's Deal or No Deal game. Top prize is a legendary Pokémon. Will you accept Giovanni's offer?
+* **Run /voltorbsweeper -** Similar to Minesweeper- identify the tiles that contain a Voltorb using the clues. 
 
 
 
@@ -46,18 +50,19 @@ Bug Fixes
 
 ★★Added Features★★
 
-* New leaderboard for Unown Ciphers \& DexDecoder games
-
-
-
-
+* New leaderboard for Giovanni's Deal or No Deal
+* New leaderboard for Voltorb Sweeper
+* Redesigned leaderboard, shop, and checkout screens
+* Items for spending coins
 
 
 
 ★★Upcoming Features★★
 
-* Market system to buy items such as pokeballs and other in game items
-* Additional games and tasks to earn coins
+* Additional Items for the Pokemart
+* Rare collectable items 
+* ✨Shiny Pokémon✨
+* Redesign and quality of life improvements for several screens.
 
 
 

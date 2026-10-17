@@ -8,6 +8,18 @@ POKETRIVIA_IMAGE = "https://cdn.discordapp.com/attachments/1540905804293607435/1
 UNOWN_EMOJI = "🔡"   
 DEXDECODER_EMOJI = "🧩"
 DEAL_OR_NO_DEAL_EMOJI = "<:giovanni:1559392555731394641>"
+VOLTORB_EMOJI = discord.PartialEmoji(name="Voltorb", id=1560468806567202906)
+VOLTORB_TEXT = "<:Voltorb:1560468806567202906>"
+
+
+GAME_OPTIONS = [
+    discord.SelectOption(label="Pokémon Caught", emoji=POKEBALL_EMOJI, value="caught"),
+    discord.SelectOption(label="Poké Trivia Winners", emoji=POKETRIVIA_EMOJI, value="trivia"),
+    discord.SelectOption(label="Unown Cipher Solvers", emoji=UNOWN_EMOJI, value="cipher"),
+    discord.SelectOption(label="DexDecoder Winners", emoji=DEXDECODER_EMOJI, value="dexdecoder"),
+    discord.SelectOption(label="Giovanni's Deal or No Deal", emoji=DEAL_OR_NO_DEAL_EMOJI, value="dealornodeal"),
+    discord.SelectOption(label="VoltorbSweeper", emoji=VOLTORB_EMOJI, value="voltorbsweeper"),
+]
 
 
 class LeaderboardView(discord.ui.View):
@@ -17,67 +29,53 @@ class LeaderboardView(discord.ui.View):
         self.guild_id = guild_id
         self.scope = scope
         self.tab = tab
+        self.rebuild()
 
-        self.add_item(TabSelect(self))
+    def rebuild(self):
+        self.clear_items()
+        self.add_item(SectionButton(self, "🏆 Progress", "progress", row=0))
+        self.add_item(SectionButton(self, "🎮 Games", "games", row=0))
+        if self.tab != "level":
+            self.add_item(GameSelect(self))
         self.add_item(ScopeSelect(self))
 
     async def refresh(self, interaction: discord.Interaction):
+        self.rebuild()
         embed = await build_leaderboard_embed(
-            self.bot,
-            self.guild_id,
-            self.scope,
-            self.tab
+            self.bot, self.guild_id, self.scope, self.tab
         )
         await interaction.edit_original_response(embed=embed, view=self)
 
 
-class TabSelect(discord.ui.Select):
-    def __init__(self, view: LeaderboardView):
-        options = [
-            discord.SelectOption(
-                label="Level",
-                emoji="🏆",
-                description="Ranked by level and EXP",
-                value="level"
-            ),
-            discord.SelectOption(
-                label="Pokémon Caught",
-                emoji=POKEBALL_EMOJI,
-                description="Ranked by total caught",
-                value="caught"
-            ),
-            discord.SelectOption(
-                label="Poké Trivia Winners",
-                emoji=POKETRIVIA_EMOJI,
-                description="Ranked by correct trivia answers",
-                value="trivia"
-            ),
-            discord.SelectOption(
-                label="Unown Cipher Solvers",
-                emoji=UNOWN_EMOJI,
-                description="Ranked by ciphers solved",
-                value="cipher"
-            ),
-           discord.SelectOption(
-               label="DexDecoder Winners",
-               emoji=DEXDECODER_EMOJI,
-               description="Ranked by puzzles solved",
-               value="dexdecoder"
-           ),
-            discord.SelectOption(
-                label="Giovanni's Deal or No Deal",
-                emoji=DEAL_OR_NO_DEAL_EMOJI,
-                description="Ranked by total winnings",
-                value="dealornodeal"
-            ),
-        ]
-        super().__init__(placeholder="Select category…", min_values=1, max_values=1, options=options)
-        self.view_ref = view
+class SectionButton(discord.ui.Button):
+    def __init__(self, parent, label, section, row=0):
+        active = (parent.tab == "level") == (section == "progress")
+        super().__init__(label=label,
+                         style=discord.ButtonStyle.primary if active else discord.ButtonStyle.secondary,
+                         row=row)
+        self.parent_view = parent
+        self.section = section
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        self.view_ref.tab = self.values[0]
-        await self.view_ref.refresh(interaction)
+        if self.section == "progress":
+            self.parent_view.tab = "level"
+        elif self.parent_view.tab == "level":
+            self.parent_view.tab = "caught"
+        await self.parent_view.refresh(interaction)
+
+
+class GameSelect(discord.ui.Select):
+    def __init__(self, parent):
+        options = [discord.SelectOption(label=o.label, emoji=o.emoji, value=o.value,
+                                        default=(parent.tab == o.value)) for o in GAME_OPTIONS]
+        super().__init__(placeholder="Choose a game leaderboard…", options=options, row=1)
+        self.parent_view = parent
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        self.parent_view.tab = self.values[0]
+        await self.parent_view.refresh(interaction)
 
 
 class ScopeSelect(discord.ui.Select):
@@ -107,6 +105,48 @@ class ScopeSelect(discord.ui.Select):
 
 async def build_leaderboard_embed(bot, guild_id, scope, tab):
     async with bot.db.acquire() as conn:
+
+        # -------------------------
+        # VOLTORBSWEEPER LEADERBOARD
+        # -------------------------
+        if tab == "voltorbsweeper":
+            if scope == "guild":
+                rows = await conn.fetch("""
+                    SELECT user_id, times_won, times_lost, win_rate
+                    FROM voltorbsweeper
+                    WHERE guild_id = $1
+                    ORDER BY times_won DESC, win_rate DESC, times_lost ASC
+                    LIMIT 10
+                """, guild_id)
+            else:
+                rows = await conn.fetch("""
+                    SELECT user_id,
+                           SUM(times_won)::BIGINT AS times_won,
+                           SUM(times_lost)::BIGINT AS times_lost,
+                           ROUND(100.0 * SUM(times_won) /
+                                 NULLIF(SUM(times_won) + SUM(times_lost), 0), 2) AS win_rate
+                    FROM voltorbsweeper
+                    GROUP BY user_id
+                    ORDER BY times_won DESC, win_rate DESC, times_lost ASC
+                    LIMIT 10
+                """)
+
+            lines = []
+            for rank, r in enumerate(rows, 1):
+                user = bot.get_user(r["user_id"])
+                name = user.name if user else f"<@{r['user_id']}>"
+                lines.append(
+                    f"**{rank}. {name}** — 🏆 {r['times_won']:,} wins | "
+                    f"❌ {r['times_lost']:,} losses | 📈 {r['win_rate']:.2f}%"
+                )
+            embed = discord.Embed(
+                title=f"{VOLTORB_TEXT} VoltorbSweeper Leaderboard" +
+                      (" — 🏙️ Guild" if scope == "guild" else " — 🌐 Global"),
+                description="\n".join(lines) if lines else "No completed VoltorbSweeper games yet.",
+                color=discord.Color.gold(),
+            )
+            embed.set_footer(text="Ranked by wins, then win rate. Cash-outs count as wins.")
+            return embed
 
         # -------------------------
         # LEVEL LEADERBOARD

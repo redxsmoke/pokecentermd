@@ -58,7 +58,6 @@ class MyBot(commands.Bot):
             "Commands.Daily.dailycommand",
             "Commands.wishlist.mywishlist",
             "Commands.SinglesRole.singlesrole",
-            "Commands.RecentlyAdded.recentlyadded",
             "Commands.ShippingInfo.shipping_info",
             "Commands.PokeTrivia.poketrivia",
             "Commands.UserLevel.userlevel",
@@ -253,30 +252,7 @@ class RulesAgreeView(discord.ui.View):
             color=discord.Color.green()
         )
 
-        embed.add_field(
-            name="📘 Commands You Can Use",
-            value=(
-                "**/shop sealed** – browse sealed products\n"
-                "**/shop singles** – browse singles\n"
-                "**/cart** – submit and pay for your order\n"
-                "**/sellyourcards** – offload cards\n"
-                "**/buyingguide** – view buying rates\n"
-                "**/myorders** – view past orders\n"
-                "**/mywishlist** – manage your wishlist\n"
-                "**/catchpokemon** – catch Pokémon for rewards\n"
-                "**/unowncipher** – play the unown cipher game\n"
-                "**/pokedex** – view caught Pokémon\n"
-                "**/daily** – daily check‑in rewards\n"
-                "**/mybadges** – view your badges\n"
-                "**/userbadges** – view others’ badges\n"
-                "**/mylevel** – view your level\n"
-                "**/leaderboard** – server leaderboard\n"
-                "**/shippinginfo** – save shipping address\n"
-                "**/reportabug** – report issues\n"
-                "**/help** – view all commands\n"
-            ),
-            inline=False
-        )
+        add_command_sections(embed, detailed=True)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -341,7 +317,7 @@ async def on_member_join(member: discord.Member):
             )
         )
 
-    # RULES ONLY EMBED
+    # WELCOME AND RULES EMBED
     embed = discord.Embed(
         title=f"👋 Welcome {member.display_name}!",
         description=(
@@ -352,10 +328,12 @@ async def on_member_join(member: discord.Member):
             "• No spamming or advertising\n"
             "• Users who abuse the system may be banned at the admin's discretion\n"
             "• Follow Discord’s Terms of Service\n\n"
-            "Click **Agree** below to accept the rules and receive access. Failure to follow these rules will result in a ban"
+            "Click **Agree** below to accept the rules and receive access. Failure to follow these rules will result in a ban. If you need a reminder of the list of commands, just type /help"
         ),
         color=discord.Color.blurple()
     )
+
+    add_command_sections(embed, detailed=False)
 
     await channel.send(embed=embed, view=RulesAgreeView(member_role, member.id))
 
@@ -363,40 +341,71 @@ async def on_member_join(member: discord.Member):
 # ---------------------------------------------------------
 #   HELP COMMAND
 # ---------------------------------------------------------
+# Centralized command directory, shared by /help and both welcome embeds.
+# Keep this list updated as new public commands are added.
+COMMAND_SECTIONS = (
+    ("🛒 Shop Commands", (
+        ("/shop sealed", "Browse sealed Pokémon products."),
+        ("/shop singles", "Browse individual cards and add them to your cart."),
+        ("/cart", "View your cart and check out."),
+        ("/buyingguide", "See current card-buying rates."),
+        ("/myorders", "View your previous orders."),
+        ("/mywishlist", "Manage your card wishlist."),
+        ("/myrewards", "View your available rewards."),
+        ("/shippinginfo", "Save or update your shipping address."),
+        ("/sellyourcards", "Submit cards you want to sell."),
+        ("/singlesrole", "Opt in to new singles notifications."),
+        ("/upcomingshows", "Find upcoming card shows."),
+    )),
+    ("🎮 Game Commands", (
+        ("/unowncipher", "Solve the Unown cipher."),
+        ("/catchpokemon", "Catch Pokémon and earn rewards."),
+        ("/slots", "Play the slots game."),
+        ("/dexdecoder", "Play Dex Decoder."),
+        ("/dealornodeal", "Play Giovanni's Deal or No Deal."),
+        ("/voltorbsweeper", "Play Voltorb Sweeper."),
+        ("/pokemart", "Visit the Poké Mart.")
+
+    )),
+    ("🏆 Progress Commands", (
+        ("/pokedex", "View Pokémon you've caught."),
+        ("/daily", "Claim your daily reward."),
+        ("/mybadges", "View your earned badges."),
+        ("/userbadges", "View another member's badges."),
+        ("/mylevel", "Check your level and experience."),
+        ("/leaderboard", "View the server leaderboard."),
+        ("/wallet", "View your wallet and currency."),
+    )),
+    ("🤖 Bot Commands", (
+        ("/help", "Open this command guide."),
+        ("/reportabug", "Report an issue to the developers."),
+    )),
+)
+
+
+def add_command_sections(embed: discord.Embed, detailed: bool = True):
+    """Add four organized command categories without exceeding embed field limits."""
+    for heading, commands_list in COMMAND_SECTIONS:
+        if detailed:
+            value = "\n".join(f"**{command}** — {description}" for command, description in commands_list)
+        else:
+            value = " • ".join(f"`{command}`" for command, _ in commands_list)
+        embed.add_field(name=heading, value=value, inline=False)
+
+
 @bot.tree.command(name="help", description="Shows all available commands.")
 async def help_command(interaction: discord.Interaction):
     embed = discord.Embed(
         title="📘 Bot Command Guide",
-        description="Here’s everything you can do with the bot:",
+        description="Explore the shop, play games, track your progress, and manage your account.",
         color=discord.Color.blue()
     )
-
-    embed.add_field(name="🛒📦 /shop sealed", value="Browse sealed collection and add to cart.", inline=False)
-    embed.add_field(name="🛒 /shop singles", value="Browse cards and add to cart.", inline=False)
-    embed.add_field(name="💳 /cart", value="Submit and pay for your order.", inline=False)
-    embed.add_field(name="📤 /sellyourcards", value="Send us cards you'd like to offload.", inline=False)
-    embed.add_field(name="📘 /buyingguide", value="View our current buying rates.", inline=False)
-    embed.add_field(name="📦 /myorders", value="View your past orders.", inline=False)
-    embed.add_field(name="🎪 /upcomingshows", value="See our upcoming shows.", inline=False)
-    embed.add_field(name="✨ /mywishlist", value="Add, view, and remove items to your wish list.", inline=False)
-    embed.add_field(name="🏅 /catchpokemon", value="Earn rewards by catching pokemon!", inline=False)
-    embed.add_field(name="🔡 /unowncipher", value="Play the unown cipher game!", inline=False)
-    embed.add_field(name="✅ /pokedex", value="View pokemon you've caught using /catchpokemon", inline=False)
-    embed.add_field(name="📆 /daily", value="Earn rewards by checking in daily", inline=False)
-    embed.add_field(name="⭐ /mybadges", value="View your badges", inline=False)
-    embed.add_field(name="👤 /userbadges", value="View other server members' badges", inline=False)
-    embed.add_field(name="🎚️ /mylevel", value="View your current level and EXP progress", inline=False)
-    embed.add_field(name="👑 /leaderboard", value="View level and number of pokemon caught leaderboard", inline=False)
-    embed.add_field(name="✉️ /shippinginfo", value="Add a saved shipping aderss for faster checkout", inline=False)
-    embed.add_field(name="🐛 /reportabug", value="Report an issue with the bot to the developers!", inline=False)
-    embed.add_field(name="ℹ️ /help", value="View this command list again.", inline=False)
-
+    add_command_sections(embed, detailed=True)
     embed.add_field(
-        name="**Troubleshooting:**",
-        value="If you receive this error ⚠️ **An internal error occurred while processing this command**, make sure you are **not running the command inside a direct message**.",
+        name="🔧 Troubleshooting",
+        value="If you receive an internal error, make sure you're running the command in the server rather than a direct message.",
         inline=False
     )
-
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
