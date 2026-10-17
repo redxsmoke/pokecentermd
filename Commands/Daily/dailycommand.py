@@ -28,7 +28,7 @@ class Daily(commands.Cog):
         description="Claim your daily Poké Ball reward"
     )
     async def daily(self, interaction: discord.Interaction):
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
 
         user_id = interaction.user.id
         guild_id = interaction.guild.id
@@ -59,14 +59,14 @@ class Daily(commands.Cog):
                 minutes = int((remaining % 3600) // 60)
 
                 embed = discord.Embed(
-                    title="<:Pokeball1:1540418809939099818> Daily Already Claimed",
+                    title="<:Pokeball1:1540904892195930182> Daily Already Claimed",
                     description=f"Come back in **{hours}h {minutes}m**",
                     color=discord.Color.red()
                 )
 
                 await interaction.followup.send(
                     embed=embed,
-                    ephemeral=True
+                    ephemeral=False
                 )
                 return
 
@@ -160,7 +160,7 @@ class Daily(commands.Cog):
 
         embed.add_field(
             name="Poké Balls",
-            value=f"<:Pokeball1:1540418809939099818> {DAILY_POKEBALL_REWARD}",
+            value=f"<:Pokeball1:1540904892195930182> {DAILY_POKEBALL_REWARD}",
             inline=True
         )
 
@@ -200,7 +200,7 @@ class Daily(commands.Cog):
 
         await interaction.followup.send(
             embed=embed,
-            ephemeral=True
+            ephemeral=False
         )
 
 

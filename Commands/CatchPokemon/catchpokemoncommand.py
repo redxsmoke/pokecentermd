@@ -2,6 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 import random
+import asyncio
+
+MAX_BERRIES_PER_ENCOUNTER = 5
 
 POKEDRILL_BASE = "https://sprites.pokedrill.com/sprites/official"
 
@@ -121,7 +124,7 @@ class CatchPokemon(commands.Cog):
             description=f"A wild **{pokemon_name}** appeared!",
             color=discord.Color.green()
         )
-        embed.set_image(url=image_url)
+        embed.set_thumbnail(url=image_url)
 
         view = EncounterView(
             bot=self.bot,
@@ -153,7 +156,7 @@ class EncounterView(discord.ui.View):
             description=f"Trying to catch **{self.pokemon_name}**...",
             color=discord.Color.blurple()
         )
-        embed.set_image(url=self.image_url)
+        embed.set_thumbnail(url=self.image_url)
 
         view = CatchAttemptView(
             bot=self.bot,
@@ -180,13 +183,13 @@ class EncounterView(discord.ui.View):
             description=f"You fled from **{self.pokemon_name}**!",
             color=discord.Color.red()
         )
-        embed.set_image(url=self.image_url)
+        embed.set_thumbnail(url=self.image_url)
 
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 class CatchAttemptView(discord.ui.View):
-    def __init__(self, bot, pokemon_name, image_url, catch_rate, pokedex_id, pokemon_region):
+    def __init__(self, bot, pokemon_name, image_url, catch_rate, pokedex_id, pokemon_region, owner_id=None):
         super().__init__(timeout=120)
         self.bot = bot
         self.pokemon_name = pokemon_name.title()
@@ -199,6 +202,10 @@ class CatchAttemptView(discord.ui.View):
         self.max_attempts = random.randint(2, 10)
         self.flee_chance = 0.10
         self.finished = False
+        self.owner_id = owner_id
+        self.berries_used = 0
+        self.berry_bonus = 0
+        self.action_lock = asyncio.Lock()
 
         self.miss_messages = [
             f"**{self.pokemon_name}** broke free!",
@@ -220,7 +227,43 @@ class CatchAttemptView(discord.ui.View):
 
         return rows
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if self.owner_id is not None and interaction.user.id != self.owner_id:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ Not Your Encounter",
+                    description="Only the trainer who started this encounter can use these items.",
+                    color=discord.Color.orange(),
+                ),
+                ephemeral=True,
+            )
+            return False
+        return True
+
+    async def load_berry_count(self, interaction):
+        async with self.bot.db.acquire() as conn:
+            return await conn.fetchval("""
+                SELECT COALESCE(ui.quantity, 0)
+                FROM cd_items i
+                LEFT JOIN user_items ui
+                  ON ui.cd_item_id = i.cd_item_id
+                 AND ui.user_id = $1 AND ui.guild_id = $2
+                WHERE i.item_name = 'Razz Berry'
+            """, interaction.user.id, interaction.guild.id) or 0
+
+    async def load_berry_emoji(self):
+        async with self.bot.db.acquire() as conn:
+            row = await conn.fetchrow("""
+                SELECT emoji_name, emoji_id
+                FROM cd_items
+                WHERE item_name = 'Razz Berry'
+            """)
+        if row and row["emoji_name"] and row["emoji_id"]:
+            return discord.PartialEmoji(name=row["emoji_name"], id=int(row["emoji_id"]))
+        return None
+
     async def build_ball_buttons(self, interaction):
+        self.clear_items()
         balls = await self.load_user_balls(interaction)
 
         for ball in balls:
@@ -230,6 +273,7 @@ class CatchAttemptView(discord.ui.View):
             button = discord.ui.Button(
                 label=f"Throw {ball['item_name']} ({ball['quantity']})",
                 style=discord.ButtonStyle.primary,
+                row=0,
                 emoji=discord.PartialEmoji(
                     name=ball["emoji_name"],
                     id=ball["emoji_id"]
@@ -242,6 +286,68 @@ class CatchAttemptView(discord.ui.View):
             button.callback = callback
             self.add_item(button)
 
+        berry_count = await self.load_berry_count(interaction)
+        berry_button = discord.ui.Button(
+            label=f"Use Razz Berry ({berry_count}) • {self.berries_used}/{MAX_BERRIES_PER_ENCOUNTER}",
+            style=discord.ButtonStyle.success,
+            emoji=await self.load_berry_emoji(),
+            row=1,
+            disabled=(berry_count <= 0 or self.berries_used >= MAX_BERRIES_PER_ENCOUNTER or self.finished),
+        )
+        berry_button.callback = self.use_razz_berry
+        self.add_item(berry_button)
+
+    async def use_razz_berry(self, interaction: discord.Interaction):
+        async with self.action_lock:
+            if self.finished or self.berries_used >= MAX_BERRIES_PER_ENCOUNTER:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        title="⚠️ Berry Limit",
+                        description="You cannot use any more Razz Berries in this encounter.",
+                        color=discord.Color.orange(),
+                    ), ephemeral=True,
+                )
+                return
+
+            # Consume exactly one berry, only if it is still owned.
+            async with self.bot.db.acquire() as conn:
+                consumed = await conn.fetchval("""
+                    UPDATE user_items
+                    SET quantity = quantity - 1, updated_timestamp = NOW()
+                    WHERE user_id = $1 AND guild_id = $2
+                      AND cd_item_id = (
+                          SELECT cd_item_id FROM cd_items WHERE item_name = 'Razz Berry'
+                      )
+                      AND quantity > 0
+                    RETURNING quantity
+                """, interaction.user.id, interaction.guild.id)
+
+            if consumed is None:
+                await interaction.response.send_message(
+                    embed=discord.Embed(
+                        title="🍓 No Razz Berries",
+                        description="You don't have any Razz Berries. Visit **/pokemart** to buy some.",
+                        color=discord.Color.red(),
+                    ), ephemeral=True,
+                )
+                return
+
+            self.berries_used += 1
+            self.berry_bonus = self.berries_used * 3
+            await self.build_ball_buttons(interaction)
+            embed = discord.Embed(
+                title="🍓 Razz Berry Used!",
+                description=(
+                    f"You fed a Razz Berry to **{self.pokemon_name}**!\n"
+                    f"Catch bonus: **+{self.berry_bonus} percentage points** "
+                    f"({self.berries_used}/{MAX_BERRIES_PER_ENCOUNTER} Berries used).\n"
+                    "The bonus applies to every remaining throw in this encounter."
+                ),
+                color=discord.Color.green(),
+            )
+            embed.set_thumbnail(url=self.image_url)
+            await interaction.response.edit_message(embed=embed, view=self)
+
     async def throw_ball(self, interaction: discord.Interaction, ball):
 
         if self.finished:
@@ -250,22 +356,34 @@ class CatchAttemptView(discord.ui.View):
                 description="This encounter has already ended.",
                 color=discord.Color.orange()
             )
-            embed.set_image(url=self.image_url)
+            embed.set_thumbnail(url=self.image_url)
             await interaction.response.edit_message(embed=embed, view=None)
             return
 
         # Consume ball
         async with self.bot.db.acquire() as conn:
-            await conn.execute("""
+            remaining = await conn.fetchval("""
                 UPDATE user_pokemon_catch_items
                 SET quantity = quantity - 1
                 WHERE user_id = $1 AND guild_id = $2 AND item_id = $3
+                  AND quantity > 0
+                RETURNING quantity
             """, interaction.user.id, interaction.guild.id, ball["item_id"])
+
+        if remaining is None:
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="⚠️ No Poké Balls",
+                    description="You no longer have that Poké Ball.",
+                    color=discord.Color.red(),
+                ), ephemeral=True,
+            )
+            return
 
         self.attempts += 1
 
         # Apply catch modifier
-        final_rate = min(self.catch_rate + ball["catch_modifier"], 100)
+        final_rate = min(self.catch_rate + ball["catch_modifier"] + self.berry_bonus, 100)
         roll = random.randint(1, 100)
 
         # Successful catch
@@ -353,6 +471,7 @@ class CatchAttemptView(discord.ui.View):
                 description=(
                     f"**{self.pokemon_name}** was caught using a **{ball['item_name']}**!\n"
                     f"Attempts: **{self.attempts}**\n"
+                    f"🍓 Razz Berries used: **{self.berries_used}** (+{self.berry_bonus} catch chance)\n"
                     f"⭐ **You earned 10 EXP!**\n\n"
                     f"**📊 {self.pokemon_region.title()} Progress — {caught_unique_region}/{region_total}**\n"
                     f"`{progress_bar}`\n\n"
@@ -393,7 +512,7 @@ class CatchAttemptView(discord.ui.View):
                 description=f"**{self.pokemon_name}** fled after **{self.attempts}** attempts!",
                 color=discord.Color.red()
             )
-            embed.set_image(url=self.image_url)
+            embed.set_thumbnail(url=self.image_url)
 
             self.finished = True
             await interaction.response.edit_message(embed=embed, view=None)
@@ -407,7 +526,7 @@ class CatchAttemptView(discord.ui.View):
             description=miss_line,
             color=discord.Color.orange()
         )
-        embed.set_image(url=self.image_url)
+        embed.set_thumbnail(url=self.image_url)
 
         if self.attempts >= self.max_attempts:
             embed = discord.Embed(
@@ -415,24 +534,21 @@ class CatchAttemptView(discord.ui.View):
                 description=f"**{self.pokemon_name}** escaped after resisting all attempts!",
                 color=discord.Color.red()
             )
-            embed.set_image(url=self.image_url)
+            embed.set_thumbnail(url=self.image_url)
 
             self.finished = True
             await interaction.response.edit_message(embed=embed, view=None)
             return
 
-        # Rebuild buttons with updated quantities
-        new_view = CatchAttemptView(
-            self.bot,
-            self.pokemon_name,
-            self.image_url,
-            self.catch_rate,
-            self.pokedex_id,
-            self.pokemon_region
-        )
-        await new_view.build_ball_buttons(interaction)
-
-        await interaction.response.edit_message(embed=embed, view=new_view)
+        # Refresh this same view so Berry bonuses, attempt count, and flee limit persist.
+        if self.berries_used:
+            embed.add_field(
+                name="🍓 Razz Berry Bonus",
+                value=f"+{self.berry_bonus} percentage points ({self.berries_used}/5 used)",
+                inline=False,
+            )
+        await self.build_ball_buttons(interaction)
+        await interaction.response.edit_message(embed=embed, view=self)
 
 
 

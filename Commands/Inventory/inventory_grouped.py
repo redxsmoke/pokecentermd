@@ -60,11 +60,11 @@ class InventoryGrouped(commands.Cog):
             await interaction.response.send_message(reason, ephemeral=True)
             return
 
-        await interaction.response.defer(ephemeral=False)
+        await interaction.response.defer(ephemeral=True)
 
         inventory_cog = self.bot.get_cog("Inventory")
         if not inventory_cog:
-            await interaction.followup.send("Inventory system unavailable.")
+            await interaction.followup.send("Inventory system unavailable.", ephemeral=True)
             return
 
         await inventory_cog.start_singles_inventory(
