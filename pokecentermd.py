@@ -74,7 +74,8 @@ class MyBot(commands.Bot):
             "Commands.Slots.slots",
             "Commands.DealorNoDeal.dealornodeal",
             "Commands.PokeMart.pokemart",	
-            "Commands.VoltorbSweeper.voltorb_sweeper"
+            "Commands.VoltorbSweeper.voltorb_sweeper",
+            "Commands.Admin.VendorCalculator.vendorcalculator"
 
         ]
 
