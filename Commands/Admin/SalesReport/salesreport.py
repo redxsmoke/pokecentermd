@@ -584,6 +584,7 @@ class SalesReport(commands.Cog):
 
     @app_commands.command(name='salesreport', description='Interactive sales, purchases, trades and cash-flow dashboard.')
     @app_commands.guild_only()
+    @app_commands.default_permissions(administrator=True)
     async def salesreport(self, interaction: discord.Interaction):
         async with self.bot.db.acquire() as con:
             admin_id = await con.fetchval('SELECT admin_id FROM guild_settings WHERE guild_id=$1', interaction.guild_id)
