@@ -224,9 +224,9 @@ class CustomerNameModal(discord.ui.Modal, title='Vendor Calculator · Customer')
                                 str(self.customer_name).strip() or 'Walk-in Customer')
         await interaction.response.send_message(embed=session.embed(heading=(
             '**Select a transaction type**\n'
-            '🔄 **Trade-In:** Customer trades cards toward a purchase.\n'
-            '💵 **Customer Selling:** You buy cards from the customer.\n'
-            '🛒 **No Trade:** Customer buys cards from you without a trade-in.')),
+            '🔄 **Trading:** Customer trades cards toward a purchase.\n'
+            '💵 **Buying:** You buy cards from the customer.\n'
+            '🛒 **Selling:** Customer buys cards from you without a trade-in.')),
             view=StartView(session), ephemeral=False)
 
 
