@@ -1,4 +1,4 @@
-send: True
+send: False
 
 Version: 1.7
 
@@ -10,12 +10,12 @@ What's New
 * ***Resigned shop command with improved performance, sorting options, and skip to page functionality.***
 * ***Updated checkout system that simplifies and enhances the checkout process.***
 * ***Redesigned slots game that provides a cleaner user interface***
-* ***Items - Spend your hard earned coins on items in the /pokemart.*** 
+* ***Items - Spend your hard earned coins on items in the /pokemart.***
 
-  * ***Items Added*** 
+  * ***Items Added***
 
     * ***Berries - Feed berries to wild Pokemon and increase your odds of catching them.***
-    * ***Meowth's Charm - Meowth's Charm provides a 25% increased chance of winning in the /slots game for 10 minutes.*** 
+    * ***Meowth's Charm - Meowth's Charm provides a 25% increased chance of winning in the /slots game for 10 minutes.***
     * ***More items coming soon!***
 
 
@@ -38,7 +38,7 @@ Removed Commands
 How to Use
 
 * **Run /dealornodeal** — Play Giovanni's Deal or No Deal game. Top prize is a legendary Pokémon. Will you accept Giovanni's offer?
-* **Run /voltorbsweeper -** Similar to Minesweeper- identify the tiles that contain a Voltorb using the clues. 
+* **Run /voltorbsweeper -** Similar to Minesweeper- identify the tiles that contain a Voltorb using the clues.
 
 
 
@@ -60,7 +60,7 @@ Bug Fixes
 ★★Upcoming Features★★
 
 * Additional Items for the Pokemart
-* Rare collectable items 
+* Rare collectable items
 * ✨Shiny Pokémon✨
 * Redesign and quality of life improvements for several screens.
 
