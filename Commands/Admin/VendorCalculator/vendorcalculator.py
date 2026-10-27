@@ -224,24 +224,24 @@ class CustomerNameModal(discord.ui.Modal, title='Vendor Calculator · Customer')
                                 str(self.customer_name).strip() or 'Walk-in Customer')
         await interaction.response.send_message(embed=session.embed(heading=(
             '**Select a transaction type**\n'
-            '🔄 **Trade-In:** Customer trades cards toward a purchase.\n'
-            '💵 **Customer Selling:** You buy cards from the customer.\n'
-            '🛒 **No Trade:** Customer buys cards from you without a trade-in.')),
+            '🔄 **Trading:** Customer trades cards toward a purchase.\n'
+            '💵 **Buying:** You buy cards from the customer.\n'
+            '🛒 **Selling:** Customer buys cards from you without a trade-in.')),
             view=StartView(session), ephemeral=False)
 
 
 class StartView(OwnerView):
-    @discord.ui.button(label='Trade-In', emoji='🔄', style=discord.ButtonStyle.primary)
+    @discord.ui.button(label='Trading', emoji='🔄', style=discord.ButtonStyle.primary)
     async def trade(self, interaction, button):
         self.session.mode = 'trade'
         await interaction.response.send_modal(CustomerCardModal(self.session))
 
-    @discord.ui.button(label='Customer Selling', emoji='💵', style=discord.ButtonStyle.success)
+    @discord.ui.button(label='Buying', emoji='💵', style=discord.ButtonStyle.success)
     async def buy(self, interaction, button):
         self.session.mode = 'buy'
         await interaction.response.send_modal(CustomerCardModal(self.session))
 
-    @discord.ui.button(label='No Trade', emoji='🛒', style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label='Selling', emoji='🛒', style=discord.ButtonStyle.secondary)
     async def sale(self, interaction, button):
         self.session.mode = 'sale'
         await interaction.response.send_modal(SaleCardModal(self.session))

@@ -26,7 +26,7 @@ except ImportError:
 
 PAGE_SIZE = 8
 MAX_EXPORT_ROWS = 10000
-MODES = ('Overview', 'Cash Flow', 'Trades', 'Transactions', 'Top Cards')
+MODES = ('Overview', 'Cash Flow', 'Trades', 'Transactions', 'Top Cards', 'Purchased Cards', 'Sold Cards')
 PERIODS = ('Today', 'Week', 'Month', 'Year', 'All Time', 'Custom')
 
 
@@ -130,8 +130,21 @@ async def fetch_report(pool, guild_id, start, end, tz_name):
               AND ($3::timestamptz IS NULL OR s.transaction_date < $3)
             GROUP BY i.card_name, i.item_type ORDER BY total DESC LIMIT 15
         ''', *args)
+        # Full per-card lists (rather than Top Cards' 15-name limit), scoped to
+        # the selected guild and reporting period. Trades count on both sides.
+        item_lists = await con.fetch(f'''
+            SELECT i.card_name, i.item_type, SUM(i.quantity)::bigint AS qty,
+                   COALESCE(SUM(i.final_price_cents * i.quantity),0)::bigint AS total
+            FROM sales_items i JOIN sales s ON s.transaction_id=i.transaction_id
+            WHERE s.guild_id=$1 AND ($2::timestamptz IS NULL OR s.transaction_date >= $2)
+              AND ($3::timestamptz IS NULL OR s.transaction_date < $3)
+            GROUP BY i.item_type, i.card_name
+            ORDER BY total DESC, i.card_name ASC
+        ''', *args)
     return {'totals': dict(totals), 'trend': [dict(x) for x in trend],
-            'recent': [dict(x) for x in recent], 'trade': dict(trade), 'cards': [dict(x) for x in cards]}
+            'recent': [dict(x) for x in recent], 'trade': dict(trade),
+            'cards': [dict(x) for x in cards],
+            'item_lists': [dict(x) for x in item_lists]}
 
 
 def chart_png(rows, period, start=None, end=None, tz_name='America/New_York'):
@@ -493,6 +506,23 @@ class ReportView(discord.ui.View):
                                  f"{r['qty']} item(s) · {money(r['total'])}")
                 e.description += '\n\n' + '\n\n'.join(lines)
             e.set_footer(text='Top 15 card names by total item value. 🔽 acquired / 🔼 sold.')
+        elif self.mode in ('Purchased Cards', 'Sold Cards'):
+            kind = 'acquired' if self.mode == 'Purchased Cards' else 'sold'
+            icon = '🔽' if kind == 'acquired' else '🔼'
+            rows = [r for r in d['item_lists'] if r['item_type'] == kind]
+            pages = max(1, (len(rows) + PAGE_SIZE - 1) // PAGE_SIZE)
+            self.page = min(self.page, pages - 1)
+            selected = rows[self.page * PAGE_SIZE:(self.page + 1) * PAGE_SIZE]
+            if not selected:
+                e.add_field(name='No cards', value='No matching cards in this period.', inline=False)
+            else:
+                lines = []
+                for i, r in enumerate(selected, self.page * PAGE_SIZE + 1):
+                    lines.append(f"**{i}.** {icon} {truncate(clean(r['card_name']), 44)}\n"
+                                 f"{r['qty']} item(s) · {money(r['total'])}")
+                e.description += '\n\n' + '\n\n'.join(lines)
+            label = 'acquired (direct purchases + trade-ins)' if kind == 'acquired' else 'sold (direct sales + trades)'
+            e.set_footer(text=f'{len(rows):,} card names · Page {self.page+1}/{pages} · {label}.')
         return e
 
     async def render(self, interaction, edit=True):
@@ -526,7 +556,13 @@ class ReportView(discord.ui.View):
     @discord.ui.button(label='Next ▶', style=discord.ButtonStyle.secondary, row=0)
     async def next_page(self, interaction, button):
         if self.data:
-            self.page = min(self.page + 1, max(0, (len(self.data['recent']) - 1) // PAGE_SIZE))
+            if self.mode == 'Purchased Cards':
+                count = sum(r['item_type'] == 'acquired' for r in self.data['item_lists'])
+            elif self.mode == 'Sold Cards':
+                count = sum(r['item_type'] == 'sold' for r in self.data['item_lists'])
+            else:
+                count = len(self.data['recent'])
+            self.page = min(self.page + 1, max(0, (count - 1) // PAGE_SIZE))
         await self.render(interaction)
 
     @discord.ui.button(label='🔄 Refresh', style=discord.ButtonStyle.primary, row=0)
