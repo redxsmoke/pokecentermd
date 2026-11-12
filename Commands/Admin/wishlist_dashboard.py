@@ -37,6 +37,9 @@ class WishlistDashboardView(discord.ui.View):
                        series,
                        set_name,
                        condition,
+                       variant,
+                       card_number,
+                       price,
                        created_at
                 FROM user_wishlist
                 WHERE guild_id = $1
@@ -60,6 +63,9 @@ class WishlistDashboardView(discord.ui.View):
                 series = r["series"] or "(Any Series)"
                 set_name = r["set_name"] or "(Any Set)"
                 condition = r["condition"] or "(Any Condition)"
+                variant = r["variant"] or "(Any Variant)"
+                card_number = r["card_number"] or "(Any Card Number)"
+                max_price = f"${r['price']:.2f}" if r["price"] is not None else "(Any Price)"
 
                 block = (
                     f"**{username}**\n"
@@ -68,6 +74,9 @@ class WishlistDashboardView(discord.ui.View):
                     f"- **Set:** {set_name}\n"
                     f"- **Series:** {series}\n"
                     f"- **Condition:** {condition}\n"
+                    f"- **Variant:** {variant}\n"
+                    f"- **Card Number:** {card_number}\n"
+                    f"- **Max Price:** {max_price}\n"
                 )
                 blocks.append(block)
 
@@ -285,7 +294,10 @@ async def send_wishlist_details(interaction: discord.Interaction, wishlist_id: i
     series = row["series"] or "(Any Series)"
     set_name = row["set_name"] or "(Any Set)"
     condition = row["condition"] or "(Any Condition)"
-    price = str(row["price"]) if row["price"] else "(Any Price)"
+    variant = row["variant"] or "(Any Variant)"
+    card_number = row["card_number"] or "(Any Card Number)"
+    illustrator = row["illustrator"] or "(Any Illustrator)"
+    price = f"${row['price']:.2f}" if row["price"] is not None else "(Any Price)"
     notes = row["notes"] or "None"
 
     desc = (
@@ -294,7 +306,10 @@ async def send_wishlist_details(interaction: discord.Interaction, wishlist_id: i
         f"- **Series:** {series}\n"
         f"- **Set:** {set_name}\n"
         f"- **Condition:** {condition}\n"
-        f"- **Price:** {price}\n"
+        f"- **Variant:** {variant}\n"
+        f"- **Card Number:** {card_number}\n"
+        f"- **Illustrator:** {illustrator}\n"
+        f"- **Max Price:** {price}\n"
         f"- **Notes:** {notes}\n"
     )
 

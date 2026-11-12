@@ -6,11 +6,13 @@ PAGE_SIZE = 20
 
 class WishlistStep:
     MODAL = 1
-    CONDITION = 2
-    SERIES_PROMPT = 3
-    SERIES = 4
-    SET = 5
-    CONFIRM = 6
+    CARD_NUMBER = 2
+    VARIANT = 3
+    CONDITION = 4
+    SERIES_PROMPT = 5
+    SERIES = 6
+    SET = 7
+    CONFIRM = 8
 
 class WishlistWizardView(ui.View):
     def __init__(self, bot, user):
@@ -21,6 +23,7 @@ class WishlistWizardView(ui.View):
         self.state = {
             "pokemon_name": None,
             "variant": None,
+            "card_number": None,
             "price": None,
             "condition": None,
             "series": None,
@@ -51,6 +54,12 @@ class WishlistWizardView(ui.View):
             self.add_item(self.back_button)
             self.add_item(self.next_button)
 
+        if self.step == WishlistStep.CARD_NUMBER:
+            self.add_item(CardNumberSkip(self))
+
+        if self.step == WishlistStep.VARIANT:
+            self.add_item(VariantSelect(self))
+
         if self.step == WishlistStep.CONDITION:
             self.add_item(ConditionSelect(self))
 
@@ -71,41 +80,55 @@ class WishlistWizardView(ui.View):
             return discord.Embed(
                 title="Step 1 — Basic Filters",
                 description="All fields optional, but at least one must be entered.\n\n"
-                            "Click **Next** to enter Pokémon name, variant, price, illustrator, and notes.",
+                            "Click **Next** to enter Pokémon name, price, illustrator, and notes.",
+                color=discord.Color.blurple()
+            )
+
+        if self.step == WishlistStep.CARD_NUMBER:
+            return discord.Embed(
+                title="Step 2 — Card Number",
+                description="Click **Next** to enter an optional card number, or **Skip**.",
+                color=discord.Color.blurple()
+            )
+
+        if self.step == WishlistStep.VARIANT:
+            return discord.Embed(
+                title="Step 3 — Variant",
+                description="Choose a variant, or select **Other** to enter your own.",
                 color=discord.Color.blurple()
             )
 
         if self.step == WishlistStep.CONDITION:
             return discord.Embed(
-                title="Step 2 — Condition",
+                title="Step 4 — Condition",
                 description="Select the card condition.",
                 color=discord.Color.blurple()
             )
 
         if self.step == WishlistStep.SERIES_PROMPT:
             return discord.Embed(
-                title="Step 3 — Series + Set?",
+                title="Step 5 — Series + Set?",
                 description="Would you like to add Series + Set filters?",
                 color=discord.Color.blurple()
             )
 
         if self.step == WishlistStep.SERIES:
             return discord.Embed(
-                title="Step 4 — Series",
+                title="Step 6 — Series",
                 description="Select a Series.",
                 color=discord.Color.blurple()
             )
 
         if self.step == WishlistStep.SET:
             return discord.Embed(
-                title="Step 5 — Set",
+                title="Step 7 — Set",
                 description="Select a Set.",
                 color=discord.Color.blurple()
             )
 
         if self.step == WishlistStep.CONFIRM:
             embed = discord.Embed(
-                title="Step 6 — Confirm",
+                title="Step 8 — Confirm",
                 description="Review your wishlist filter.",
                 color=discord.Color.green()
             )
@@ -124,7 +147,10 @@ class WishlistWizardView(ui.View):
         if self.step == WishlistStep.MODAL:
             await interaction.response.defer(ephemeral=True)
             return
-        self.step -= 1
+        if self.step == WishlistStep.CONFIRM and self.state["series"] is None:
+            self.step = WishlistStep.SERIES_PROMPT
+        else:
+            self.step -= 1
         await interaction.response.defer(ephemeral=True)
         await self.update()
 
@@ -132,6 +158,16 @@ class WishlistWizardView(ui.View):
     async def next_button(self, interaction, button):
         if self.step == WishlistStep.MODAL:
             await interaction.response.send_modal(WishlistModal(self))
+            return
+
+        if self.step == WishlistStep.CARD_NUMBER:
+            await interaction.response.send_modal(CardNumberModal(self))
+            return
+
+        if self.step == WishlistStep.VARIANT:
+            self.step = WishlistStep.CONDITION
+            await interaction.response.defer(ephemeral=True)
+            await self.update()
             return
 
         if self.step == WishlistStep.CONDITION:
@@ -192,9 +228,9 @@ class WishlistWizardView(ui.View):
                 INSERT INTO user_wishlist (
                     guild_id, user_id,
                     pokemon_name, series, set_name,
-                    variant, condition, price, notes, illustrator
+                    variant, condition, price, notes, illustrator, card_number
                 )
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
                 """,
                 interaction.guild.id,
                 self.user.id,
@@ -206,6 +242,7 @@ class WishlistWizardView(ui.View):
                 self.state["price"],
                 self.state["notes"],
                 self.state["illustrator"],
+                self.state["card_number"],
             )
 
         await interaction.response.send_message(
@@ -219,7 +256,6 @@ class WishlistWizardView(ui.View):
         self.stop()
 class WishlistModal(ui.Modal, title="Wishlist Filters"):
     pokemon_name = ui.TextInput(label="Pokémon Name", required=False)
-    variant = ui.TextInput(label="Variant", required=False)
     price = ui.TextInput(label="Max Price", required=False)
     illustrator = ui.TextInput(label="Illustrator", required=False)
     notes = ui.TextInput(label="Notes", required=False)
@@ -230,11 +266,11 @@ class WishlistModal(ui.Modal, title="Wishlist Filters"):
 
     async def on_submit(self, interaction):
         self.wizard.state["pokemon_name"] = self.pokemon_name.value.strip() or None
-        self.wizard.state["variant"] = self.variant.value.strip() or None
         self.wizard.state["notes"] = self.notes.value.strip() or None
         self.wizard.state["illustrator"] = self.illustrator.value.strip() or None
 
         raw = self.price.value.strip()
+        self.wizard.state["price"] = None
         if raw:
             try:
                 raw = raw.replace("$", "").replace(",", "")
@@ -246,9 +282,67 @@ class WishlistModal(ui.Modal, title="Wishlist Filters"):
                 )
                 return
 
+        self.wizard.step = WishlistStep.CARD_NUMBER
+        await interaction.response.defer(ephemeral=True)
+        await self.wizard.update()
+
+class CardNumberSkip(ui.Button):
+    def __init__(self, wizard):
+        super().__init__(label="Skip", style=discord.ButtonStyle.secondary)
+        self.wizard = wizard
+
+    async def callback(self, interaction):
+        self.wizard.state["card_number"] = None
+        self.wizard.step = WishlistStep.VARIANT
+        await interaction.response.defer(ephemeral=True)
+        await self.wizard.update()
+
+
+class CardNumberModal(ui.Modal, title="Card Number"):
+    card_number = ui.TextInput(label="Card Number", placeholder="e.g. 4/102 or TG05/TG30", required=False, max_length=100)
+
+    def __init__(self, wizard):
+        super().__init__()
+        self.wizard = wizard
+        self.card_number.default = wizard.state["card_number"] or ""
+
+    async def on_submit(self, interaction):
+        self.wizard.state["card_number"] = self.card_number.value.strip() or None
+        self.wizard.step = WishlistStep.VARIANT
+        await interaction.response.defer(ephemeral=True)
+        await self.wizard.update()
+
+
+class CustomVariantModal(ui.Modal, title="Custom Variant"):
+    custom_variant = ui.TextInput(label="Variant", required=True, max_length=100)
+
+    def __init__(self, wizard):
+        super().__init__()
+        self.wizard = wizard
+
+    async def on_submit(self, interaction):
+        self.wizard.state["variant"] = self.custom_variant.value.strip()
         self.wizard.step = WishlistStep.CONDITION
         await interaction.response.defer(ephemeral=True)
         await self.wizard.update()
+
+
+class VariantSelect(ui.Select):
+    def __init__(self, wizard):
+        variants = ["Any", "Common", "Holo", "Reverse Holo", "Cracked Ice Holo", "Cosmos Holo", "Rainbow", "Other"]
+        super().__init__(placeholder="Select Variant", options=[discord.SelectOption(label=v, value=v) for v in variants])
+        self.wizard = wizard
+
+    async def callback(self, interaction):
+        value = self.values[0]
+        if value == "Other":
+            await interaction.response.send_modal(CustomVariantModal(self.wizard))
+            return
+        self.wizard.state["variant"] = None if value == "Any" else value
+        self.wizard.step = WishlistStep.CONDITION
+        await interaction.response.defer(ephemeral=True)
+        await self.wizard.update()
+
 
 class ConditionSelect(ui.Select):
     def __init__(self, wizard: WishlistWizardView):
@@ -372,6 +466,9 @@ class WishlistListView(ui.View):
             if row["variant"]:
                 parts.append(f"★ Variant: {row['variant']}")
 
+            if row["card_number"]:
+                parts.append(f"★ Card Number: {row['card_number']}")
+
             if row["price"] is not None:
                 parts.append(f"★ Price: < ${row['price']:.2f}")
 
@@ -410,6 +507,12 @@ class WishlistListView(ui.View):
 
             if row["pokemon_name"]:
                 parts.append(f"{row['pokemon_name']}")
+
+            if row["card_number"]:
+                parts.append(f"Card #: {row['card_number']}")
+
+            if row["variant"]:
+                parts.append(f"Variant: {row['variant']}")
 
             if row["condition"]:
                 parts.append(f"Condition: {row['condition']}")
@@ -485,6 +588,12 @@ class WishlistListView(ui.View):
 
             if row["pokemon_name"]:
                 parts.append(row["pokemon_name"])
+
+            if row["card_number"]:
+                parts.append(f"Card #: {row['card_number']}")
+
+            if row["variant"]:
+                parts.append(f"Variant: {row['variant']}")
 
             if row["condition"]:
                 parts.append(f"Condition: {row['condition']}")
@@ -630,6 +739,7 @@ class Wishlist(commands.Cog):
                        series,
                        set_name,
                        variant,
+                       card_number,
                        condition,
                        price,
                        notes,
